@@ -1,0 +1,1703 @@
+{
+  "sites": [
+    {
+      "site_id": "CORE",
+      "name": "London Core Network",
+      "site_type": "core",
+      "city": "London",
+      "country": "United Kingdom"
+    },
+    {
+      "site_id": "DC1",
+      "name": "Slough Data Centre",
+      "site_type": "data_centre",
+      "city": "Slough",
+      "country": "United Kingdom"
+    },
+    {
+      "site_id": "NYC",
+      "name": "New York Branch",
+      "site_type": "branch",
+      "city": "New York",
+      "country": "United States"
+    },
+    {
+      "site_id": "SIN",
+      "name": "Singapore Branch",
+      "site_type": "branch",
+      "city": "Singapore",
+      "country": "Singapore"
+    },
+    {
+      "site_id": "BLR",
+      "name": "Bengaluru Branch",
+      "site_type": "branch",
+      "city": "Bengaluru",
+      "country": "India"
+    }
+  ],
+  "devices": [
+    {
+      "device_id": "CORE-RTR-01",
+      "hostname": "core-rtr-01",
+      "device_type": "router",
+      "role": "core_router",
+      "site_id": "CORE",
+      "vendor": "Cisco",
+      "model": "ASR 1001-X",
+      "os_version": "IOS XE 17.9.4a",
+      "management_ip": "10.255.0.1",
+      "router_id": "10.255.0.1",
+      "bgp_asn": 65000
+    },
+    {
+      "device_id": "CORE-RTR-02",
+      "hostname": "core-rtr-02",
+      "device_type": "router",
+      "role": "core_router",
+      "site_id": "CORE",
+      "vendor": "Cisco",
+      "model": "ASR 1001-X",
+      "os_version": "IOS XE 17.9.4a",
+      "management_ip": "10.255.0.2",
+      "router_id": "10.255.0.2",
+      "bgp_asn": 65000
+    },
+    {
+      "device_id": "CORE-SW-01",
+      "hostname": "core-sw-01",
+      "device_type": "switch",
+      "role": "core_switch",
+      "site_id": "CORE",
+      "vendor": "Cisco",
+      "model": "Catalyst 9500-24Y4C",
+      "os_version": "IOS XE 17.9.4a",
+      "management_ip": "10.255.0.3",
+      "router_id": "10.255.0.3",
+      "bgp_asn": null
+    },
+    {
+      "device_id": "CORE-FW-01",
+      "hostname": "core-fw-01",
+      "device_type": "firewall",
+      "role": "perimeter_firewall",
+      "site_id": "CORE",
+      "vendor": "Palo Alto Networks",
+      "model": "PA-3220",
+      "os_version": "PAN-OS 10.2.7",
+      "management_ip": "10.255.0.4",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "DC1-FW-01",
+      "hostname": "dc1-fw-01",
+      "device_type": "firewall",
+      "role": "data_centre_firewall",
+      "site_id": "DC1",
+      "vendor": "Palo Alto Networks",
+      "model": "PA-3220",
+      "os_version": "PAN-OS 10.2.7",
+      "management_ip": "10.255.0.5",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "DC1-SW-01",
+      "hostname": "dc1-sw-01",
+      "device_type": "switch",
+      "role": "distribution_switch",
+      "site_id": "DC1",
+      "vendor": "Cisco",
+      "model": "Catalyst 9300-48T",
+      "os_version": "IOS XE 17.9.4a",
+      "management_ip": "10.255.0.6",
+      "router_id": "10.255.0.6",
+      "bgp_asn": null
+    },
+    {
+      "device_id": "DC1-SRV-DNS-01",
+      "hostname": "dc1-srv-dns-01",
+      "device_type": "server",
+      "role": "dns_server",
+      "site_id": "DC1",
+      "vendor": "Dell",
+      "model": "PowerEdge R650",
+      "os_version": "Ubuntu 22.04 LTS / BIND 9.18",
+      "management_ip": "10.100.100.10",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "DC1-SRV-DNS-02",
+      "hostname": "dc1-srv-dns-02",
+      "device_type": "server",
+      "role": "dns_server",
+      "site_id": "DC1",
+      "vendor": "Dell",
+      "model": "PowerEdge R650",
+      "os_version": "Ubuntu 22.04 LTS / BIND 9.18",
+      "management_ip": "10.100.100.11",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "DC1-SRV-DHCP-01",
+      "hostname": "dc1-srv-dhcp-01",
+      "device_type": "server",
+      "role": "dhcp_server",
+      "site_id": "DC1",
+      "vendor": "Dell",
+      "model": "PowerEdge R650",
+      "os_version": "Ubuntu 22.04 LTS / Kea DHCP 2.4",
+      "management_ip": "10.100.100.20",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "DC1-SRV-AUTH-01",
+      "hostname": "dc1-srv-auth-01",
+      "device_type": "server",
+      "role": "authentication_server",
+      "site_id": "DC1",
+      "vendor": "Dell",
+      "model": "PowerEdge R650",
+      "os_version": "Ubuntu 22.04 LTS / FreeRADIUS 3.2",
+      "management_ip": "10.100.100.30",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "DC1-SRV-APP-01",
+      "hostname": "dc1-srv-app-01",
+      "device_type": "server",
+      "role": "application_server",
+      "site_id": "DC1",
+      "vendor": "Dell",
+      "model": "PowerEdge R650",
+      "os_version": "RHEL 9.3 / ERP 12.4",
+      "management_ip": "10.100.100.40",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "NYC-RTR-01",
+      "hostname": "nyc-rtr-01",
+      "device_type": "router",
+      "role": "wan_edge",
+      "site_id": "NYC",
+      "vendor": "Cisco",
+      "model": "ISR 4331",
+      "os_version": "IOS XE 17.6.5",
+      "management_ip": "10.10.99.1",
+      "router_id": "10.255.1.10",
+      "bgp_asn": 65010
+    },
+    {
+      "device_id": "NYC-SW-01",
+      "hostname": "nyc-sw-01",
+      "device_type": "switch",
+      "role": "access_switch",
+      "site_id": "NYC",
+      "vendor": "Cisco",
+      "model": "Catalyst 9200-24P",
+      "os_version": "IOS XE 17.6.5",
+      "management_ip": "10.10.99.2",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "SIN-RTR-01",
+      "hostname": "sin-rtr-01",
+      "device_type": "router",
+      "role": "wan_edge",
+      "site_id": "SIN",
+      "vendor": "Cisco",
+      "model": "ISR 4331",
+      "os_version": "IOS XE 17.6.5",
+      "management_ip": "10.20.99.1",
+      "router_id": "10.255.1.20",
+      "bgp_asn": 65020
+    },
+    {
+      "device_id": "SIN-SW-01",
+      "hostname": "sin-sw-01",
+      "device_type": "switch",
+      "role": "access_switch",
+      "site_id": "SIN",
+      "vendor": "Cisco",
+      "model": "Catalyst 9200-24P",
+      "os_version": "IOS XE 17.6.5",
+      "management_ip": "10.20.99.2",
+      "router_id": null,
+      "bgp_asn": null
+    },
+    {
+      "device_id": "BLR-RTR-01",
+      "hostname": "blr-rtr-01",
+      "device_type": "router",
+      "role": "wan_edge",
+      "site_id": "BLR",
+      "vendor": "Cisco",
+      "model": "ISR 4331",
+      "os_version": "IOS XE 17.6.5",
+      "management_ip": "10.30.99.1",
+      "router_id": "10.255.1.30",
+      "bgp_asn": null
+    },
+    {
+      "device_id": "BLR-SW-01",
+      "hostname": "blr-sw-01",
+      "device_type": "switch",
+      "role": "access_switch",
+      "site_id": "BLR",
+      "vendor": "Cisco",
+      "model": "Catalyst 9200-24P",
+      "os_version": "IOS XE 17.6.5",
+      "management_ip": "10.30.99.2",
+      "router_id": null,
+      "bgp_asn": null
+    }
+  ],
+  "interfaces": [
+    {
+      "interface_id": "CORE-RTR-01:Te0/0/0",
+      "device_id": "CORE-RTR-01",
+      "name": "Te0/0/0",
+      "mode": "routed",
+      "description": "To CORE-SW-01:Te1/0/1",
+      "ip_address": "10.0.0.1/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-SW-01:Te1/0/1",
+      "device_id": "CORE-SW-01",
+      "name": "Te1/0/1",
+      "mode": "routed",
+      "description": "To CORE-RTR-01:Te0/0/0",
+      "ip_address": "10.0.0.2/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-RTR-02:Te0/0/0",
+      "device_id": "CORE-RTR-02",
+      "name": "Te0/0/0",
+      "mode": "routed",
+      "description": "To CORE-SW-01:Te1/0/2",
+      "ip_address": "10.0.0.5/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-SW-01:Te1/0/2",
+      "device_id": "CORE-SW-01",
+      "name": "Te1/0/2",
+      "mode": "routed",
+      "description": "To CORE-RTR-02:Te0/0/0",
+      "ip_address": "10.0.0.6/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-RTR-01:Te0/0/1",
+      "device_id": "CORE-RTR-01",
+      "name": "Te0/0/1",
+      "mode": "routed",
+      "description": "To CORE-RTR-02:Te0/0/1",
+      "ip_address": "10.0.0.9/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-RTR-02:Te0/0/1",
+      "device_id": "CORE-RTR-02",
+      "name": "Te0/0/1",
+      "mode": "routed",
+      "description": "To CORE-RTR-01:Te0/0/1",
+      "ip_address": "10.0.0.10/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-SW-01:Te1/0/3",
+      "device_id": "CORE-SW-01",
+      "name": "Te1/0/3",
+      "mode": "routed",
+      "description": "To CORE-FW-01:ethernet1/2",
+      "ip_address": "10.0.0.13/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-FW-01:ethernet1/2",
+      "device_id": "CORE-FW-01",
+      "name": "ethernet1/2",
+      "mode": "routed",
+      "description": "To CORE-SW-01:Te1/0/3",
+      "ip_address": "10.0.0.14/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-SW-01:Te1/0/4",
+      "device_id": "CORE-SW-01",
+      "name": "Te1/0/4",
+      "mode": "routed",
+      "description": "To DC1-FW-01:ethernet1/1",
+      "ip_address": "10.0.0.17/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-FW-01:ethernet1/1",
+      "device_id": "DC1-FW-01",
+      "name": "ethernet1/1",
+      "mode": "routed",
+      "description": "To CORE-SW-01:Te1/0/4",
+      "ip_address": "10.0.0.18/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-FW-01:ethernet1/2",
+      "device_id": "DC1-FW-01",
+      "name": "ethernet1/2",
+      "mode": "routed",
+      "description": "To DC1-SW-01:Te1/1/1",
+      "ip_address": "10.0.0.21/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-SW-01:Te1/1/1",
+      "device_id": "DC1-SW-01",
+      "name": "Te1/1/1",
+      "mode": "routed",
+      "description": "To DC1-FW-01:ethernet1/2",
+      "ip_address": "10.0.0.22/30",
+      "speed_mbps": 10000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "CORE-FW-01:ethernet1/1",
+      "device_id": "CORE-FW-01",
+      "name": "ethernet1/1",
+      "mode": "routed",
+      "description": "Internet uplink",
+      "ip_address": "203.0.113.2/29",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-SW-01:Vlan100",
+      "device_id": "DC1-SW-01",
+      "name": "Vlan100",
+      "mode": "virtual",
+      "description": "Server VLAN gateway",
+      "ip_address": "10.100.100.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        100
+      ]
+    },
+    {
+      "interface_id": "DC1-SRV-DNS-01:eth0",
+      "device_id": "DC1-SRV-DNS-01",
+      "name": "eth0",
+      "mode": "routed",
+      "description": "Primary NIC",
+      "ip_address": "10.100.100.10/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-SW-01:Gi1/0/1",
+      "device_id": "DC1-SW-01",
+      "name": "Gi1/0/1",
+      "mode": "access",
+      "description": "Server DC1-SRV-DNS-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        100
+      ]
+    },
+    {
+      "interface_id": "DC1-SRV-DNS-02:eth0",
+      "device_id": "DC1-SRV-DNS-02",
+      "name": "eth0",
+      "mode": "routed",
+      "description": "Primary NIC",
+      "ip_address": "10.100.100.11/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-SW-01:Gi1/0/2",
+      "device_id": "DC1-SW-01",
+      "name": "Gi1/0/2",
+      "mode": "access",
+      "description": "Server DC1-SRV-DNS-02",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        100
+      ]
+    },
+    {
+      "interface_id": "DC1-SRV-DHCP-01:eth0",
+      "device_id": "DC1-SRV-DHCP-01",
+      "name": "eth0",
+      "mode": "routed",
+      "description": "Primary NIC",
+      "ip_address": "10.100.100.20/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-SW-01:Gi1/0/3",
+      "device_id": "DC1-SW-01",
+      "name": "Gi1/0/3",
+      "mode": "access",
+      "description": "Server DC1-SRV-DHCP-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        100
+      ]
+    },
+    {
+      "interface_id": "DC1-SRV-AUTH-01:eth0",
+      "device_id": "DC1-SRV-AUTH-01",
+      "name": "eth0",
+      "mode": "routed",
+      "description": "Primary NIC",
+      "ip_address": "10.100.100.30/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-SW-01:Gi1/0/4",
+      "device_id": "DC1-SW-01",
+      "name": "Gi1/0/4",
+      "mode": "access",
+      "description": "Server DC1-SRV-AUTH-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        100
+      ]
+    },
+    {
+      "interface_id": "DC1-SRV-APP-01:eth0",
+      "device_id": "DC1-SRV-APP-01",
+      "name": "eth0",
+      "mode": "routed",
+      "description": "Primary NIC",
+      "ip_address": "10.100.100.40/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "DC1-SW-01:Gi1/0/5",
+      "device_id": "DC1-SW-01",
+      "name": "Gi1/0/5",
+      "mode": "access",
+      "description": "Server DC1-SRV-APP-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        100
+      ]
+    },
+    {
+      "interface_id": "CORE-RTR-01:Gi0/0/2",
+      "device_id": "CORE-RTR-01",
+      "name": "Gi0/0/2",
+      "mode": "routed",
+      "description": "To NYC-RTR-01:Gi0/0/0",
+      "ip_address": "172.16.0.1/30",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "NYC-RTR-01:Gi0/0/0",
+      "device_id": "NYC-RTR-01",
+      "name": "Gi0/0/0",
+      "mode": "routed",
+      "description": "To CORE-RTR-01:Gi0/0/2",
+      "ip_address": "172.16.0.2/30",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "NYC-RTR-01:Gi0/0/1",
+      "device_id": "NYC-RTR-01",
+      "name": "Gi0/0/1",
+      "mode": "trunk",
+      "description": "Trunk to NYC-SW-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10,
+        20,
+        99
+      ]
+    },
+    {
+      "interface_id": "NYC-SW-01:Gi1/0/24",
+      "device_id": "NYC-SW-01",
+      "name": "Gi1/0/24",
+      "mode": "trunk",
+      "description": "Trunk to NYC-RTR-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10,
+        20,
+        99
+      ]
+    },
+    {
+      "interface_id": "NYC-RTR-01:Gi0/0/1.10",
+      "device_id": "NYC-RTR-01",
+      "name": "Gi0/0/1.10",
+      "mode": "virtual",
+      "description": "USERS VLAN gateway",
+      "ip_address": "10.10.10.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "NYC-RTR-01:Gi0/0/1.20",
+      "device_id": "NYC-RTR-01",
+      "name": "Gi0/0/1.20",
+      "mode": "virtual",
+      "description": "VOICE VLAN gateway",
+      "ip_address": "10.10.20.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        20
+      ]
+    },
+    {
+      "interface_id": "NYC-RTR-01:Gi0/0/1.99",
+      "device_id": "NYC-RTR-01",
+      "name": "Gi0/0/1.99",
+      "mode": "virtual",
+      "description": "MGMT VLAN gateway",
+      "ip_address": "10.10.99.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        99
+      ]
+    },
+    {
+      "interface_id": "NYC-SW-01:Gi1/0/1",
+      "device_id": "NYC-SW-01",
+      "name": "Gi1/0/1",
+      "mode": "access",
+      "description": "User port (802.1X)",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "NYC-SW-01:Gi1/0/2",
+      "device_id": "NYC-SW-01",
+      "name": "Gi1/0/2",
+      "mode": "access",
+      "description": "User port (802.1X)",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "NYC-SW-01:Gi1/0/3",
+      "device_id": "NYC-SW-01",
+      "name": "Gi1/0/3",
+      "mode": "access",
+      "description": "IP phone port",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        20
+      ]
+    },
+    {
+      "interface_id": "CORE-RTR-01:Gi0/0/3",
+      "device_id": "CORE-RTR-01",
+      "name": "Gi0/0/3",
+      "mode": "routed",
+      "description": "To SIN-RTR-01:Gi0/0/0",
+      "ip_address": "172.16.0.5/30",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "SIN-RTR-01:Gi0/0/0",
+      "device_id": "SIN-RTR-01",
+      "name": "Gi0/0/0",
+      "mode": "routed",
+      "description": "To CORE-RTR-01:Gi0/0/3",
+      "ip_address": "172.16.0.6/30",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "SIN-RTR-01:Gi0/0/1",
+      "device_id": "SIN-RTR-01",
+      "name": "Gi0/0/1",
+      "mode": "trunk",
+      "description": "Trunk to SIN-SW-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10,
+        20,
+        99
+      ]
+    },
+    {
+      "interface_id": "SIN-SW-01:Gi1/0/24",
+      "device_id": "SIN-SW-01",
+      "name": "Gi1/0/24",
+      "mode": "trunk",
+      "description": "Trunk to SIN-RTR-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10,
+        20,
+        99
+      ]
+    },
+    {
+      "interface_id": "SIN-RTR-01:Gi0/0/1.10",
+      "device_id": "SIN-RTR-01",
+      "name": "Gi0/0/1.10",
+      "mode": "virtual",
+      "description": "USERS VLAN gateway",
+      "ip_address": "10.20.10.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "SIN-RTR-01:Gi0/0/1.20",
+      "device_id": "SIN-RTR-01",
+      "name": "Gi0/0/1.20",
+      "mode": "virtual",
+      "description": "VOICE VLAN gateway",
+      "ip_address": "10.20.20.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        20
+      ]
+    },
+    {
+      "interface_id": "SIN-RTR-01:Gi0/0/1.99",
+      "device_id": "SIN-RTR-01",
+      "name": "Gi0/0/1.99",
+      "mode": "virtual",
+      "description": "MGMT VLAN gateway",
+      "ip_address": "10.20.99.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        99
+      ]
+    },
+    {
+      "interface_id": "SIN-SW-01:Gi1/0/1",
+      "device_id": "SIN-SW-01",
+      "name": "Gi1/0/1",
+      "mode": "access",
+      "description": "User port (802.1X)",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "SIN-SW-01:Gi1/0/2",
+      "device_id": "SIN-SW-01",
+      "name": "Gi1/0/2",
+      "mode": "access",
+      "description": "User port (802.1X)",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "SIN-SW-01:Gi1/0/3",
+      "device_id": "SIN-SW-01",
+      "name": "Gi1/0/3",
+      "mode": "access",
+      "description": "IP phone port",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        20
+      ]
+    },
+    {
+      "interface_id": "CORE-RTR-02:Gi0/0/2",
+      "device_id": "CORE-RTR-02",
+      "name": "Gi0/0/2",
+      "mode": "routed",
+      "description": "To BLR-RTR-01:Gi0/0/0",
+      "ip_address": "172.16.0.9/30",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "BLR-RTR-01:Gi0/0/0",
+      "device_id": "BLR-RTR-01",
+      "name": "Gi0/0/0",
+      "mode": "routed",
+      "description": "To CORE-RTR-02:Gi0/0/2",
+      "ip_address": "172.16.0.10/30",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": []
+    },
+    {
+      "interface_id": "BLR-RTR-01:Gi0/0/1",
+      "device_id": "BLR-RTR-01",
+      "name": "Gi0/0/1",
+      "mode": "trunk",
+      "description": "Trunk to BLR-SW-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10,
+        20,
+        99
+      ]
+    },
+    {
+      "interface_id": "BLR-SW-01:Gi1/0/24",
+      "device_id": "BLR-SW-01",
+      "name": "Gi1/0/24",
+      "mode": "trunk",
+      "description": "Trunk to BLR-RTR-01",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10,
+        20,
+        99
+      ]
+    },
+    {
+      "interface_id": "BLR-RTR-01:Gi0/0/1.10",
+      "device_id": "BLR-RTR-01",
+      "name": "Gi0/0/1.10",
+      "mode": "virtual",
+      "description": "USERS VLAN gateway",
+      "ip_address": "10.30.10.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "BLR-RTR-01:Gi0/0/1.20",
+      "device_id": "BLR-RTR-01",
+      "name": "Gi0/0/1.20",
+      "mode": "virtual",
+      "description": "VOICE VLAN gateway",
+      "ip_address": "10.30.20.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        20
+      ]
+    },
+    {
+      "interface_id": "BLR-RTR-01:Gi0/0/1.99",
+      "device_id": "BLR-RTR-01",
+      "name": "Gi0/0/1.99",
+      "mode": "virtual",
+      "description": "MGMT VLAN gateway",
+      "ip_address": "10.30.99.1/24",
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        99
+      ]
+    },
+    {
+      "interface_id": "BLR-SW-01:Gi1/0/1",
+      "device_id": "BLR-SW-01",
+      "name": "Gi1/0/1",
+      "mode": "access",
+      "description": "User port (802.1X)",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "BLR-SW-01:Gi1/0/2",
+      "device_id": "BLR-SW-01",
+      "name": "Gi1/0/2",
+      "mode": "access",
+      "description": "User port (802.1X)",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        10
+      ]
+    },
+    {
+      "interface_id": "BLR-SW-01:Gi1/0/3",
+      "device_id": "BLR-SW-01",
+      "name": "Gi1/0/3",
+      "mode": "access",
+      "description": "IP phone port",
+      "ip_address": null,
+      "speed_mbps": 1000,
+      "mtu": 1500,
+      "vlan_ids": [
+        20
+      ]
+    }
+  ],
+  "links": [
+    {
+      "link_id": "LNK-CORE-RTR01-SW01",
+      "link_type": "lan",
+      "a_interface_id": "CORE-RTR-01:Te0/0/0",
+      "b_interface_id": "CORE-SW-01:Te1/0/1",
+      "bandwidth_mbps": 10000,
+      "latency_ms": 0.2,
+      "routing_protocol": "ospf",
+      "ospf_area": "0",
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-CORE-RTR02-SW01",
+      "link_type": "lan",
+      "a_interface_id": "CORE-RTR-02:Te0/0/0",
+      "b_interface_id": "CORE-SW-01:Te1/0/2",
+      "bandwidth_mbps": 10000,
+      "latency_ms": 0.2,
+      "routing_protocol": "ospf",
+      "ospf_area": "0",
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-CORE-RTR01-RTR02",
+      "link_type": "lan",
+      "a_interface_id": "CORE-RTR-01:Te0/0/1",
+      "b_interface_id": "CORE-RTR-02:Te0/0/1",
+      "bandwidth_mbps": 10000,
+      "latency_ms": 0.2,
+      "routing_protocol": "ospf",
+      "ospf_area": "0",
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-CORE-SW01-FW01",
+      "link_type": "lan",
+      "a_interface_id": "CORE-SW-01:Te1/0/3",
+      "b_interface_id": "CORE-FW-01:ethernet1/2",
+      "bandwidth_mbps": 10000,
+      "latency_ms": 0.2,
+      "routing_protocol": "static",
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-CORE-DC1-METRO",
+      "link_type": "metro",
+      "a_interface_id": "CORE-SW-01:Te1/0/4",
+      "b_interface_id": "DC1-FW-01:ethernet1/1",
+      "bandwidth_mbps": 10000,
+      "latency_ms": 1.8,
+      "routing_protocol": "static",
+      "ospf_area": null,
+      "provider": "Metro Fibre",
+      "circuit_id": "MET-DC1-0001"
+    },
+    {
+      "link_id": "LNK-DC1-FW01-SW01",
+      "link_type": "lan",
+      "a_interface_id": "DC1-FW-01:ethernet1/2",
+      "b_interface_id": "DC1-SW-01:Te1/1/1",
+      "bandwidth_mbps": 10000,
+      "latency_ms": 0.2,
+      "routing_protocol": "static",
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-DC1-SRV-DNS-01",
+      "link_type": "lan",
+      "a_interface_id": "DC1-SW-01:Gi1/0/1",
+      "b_interface_id": "DC1-SRV-DNS-01:eth0",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-DC1-SRV-DNS-02",
+      "link_type": "lan",
+      "a_interface_id": "DC1-SW-01:Gi1/0/2",
+      "b_interface_id": "DC1-SRV-DNS-02:eth0",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-DC1-SRV-DHCP-01",
+      "link_type": "lan",
+      "a_interface_id": "DC1-SW-01:Gi1/0/3",
+      "b_interface_id": "DC1-SRV-DHCP-01:eth0",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-DC1-SRV-AUTH-01",
+      "link_type": "lan",
+      "a_interface_id": "DC1-SW-01:Gi1/0/4",
+      "b_interface_id": "DC1-SRV-AUTH-01:eth0",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-DC1-SRV-APP-01",
+      "link_type": "lan",
+      "a_interface_id": "DC1-SW-01:Gi1/0/5",
+      "b_interface_id": "DC1-SRV-APP-01:eth0",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-WAN-NYC",
+      "link_type": "wan",
+      "a_interface_id": "CORE-RTR-01:Gi0/0/2",
+      "b_interface_id": "NYC-RTR-01:Gi0/0/0",
+      "bandwidth_mbps": 200,
+      "latency_ms": 74.0,
+      "routing_protocol": "bgp",
+      "ospf_area": null,
+      "provider": "Carrier A",
+      "circuit_id": "WAN-NYC-0001"
+    },
+    {
+      "link_id": "LNK-NYC-RTR01-SW01",
+      "link_type": "lan",
+      "a_interface_id": "NYC-RTR-01:Gi0/0/1",
+      "b_interface_id": "NYC-SW-01:Gi1/0/24",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-WAN-SIN",
+      "link_type": "wan",
+      "a_interface_id": "CORE-RTR-01:Gi0/0/3",
+      "b_interface_id": "SIN-RTR-01:Gi0/0/0",
+      "bandwidth_mbps": 200,
+      "latency_ms": 168.0,
+      "routing_protocol": "bgp",
+      "ospf_area": null,
+      "provider": "Carrier B",
+      "circuit_id": "WAN-SIN-0001"
+    },
+    {
+      "link_id": "LNK-SIN-RTR01-SW01",
+      "link_type": "lan",
+      "a_interface_id": "SIN-RTR-01:Gi0/0/1",
+      "b_interface_id": "SIN-SW-01:Gi1/0/24",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    },
+    {
+      "link_id": "LNK-WAN-BLR",
+      "link_type": "wan",
+      "a_interface_id": "CORE-RTR-02:Gi0/0/2",
+      "b_interface_id": "BLR-RTR-01:Gi0/0/0",
+      "bandwidth_mbps": 200,
+      "latency_ms": 132.0,
+      "routing_protocol": "ospf",
+      "ospf_area": "10",
+      "provider": "Carrier C",
+      "circuit_id": "WAN-BLR-0001"
+    },
+    {
+      "link_id": "LNK-BLR-RTR01-SW01",
+      "link_type": "lan",
+      "a_interface_id": "BLR-RTR-01:Gi0/0/1",
+      "b_interface_id": "BLR-SW-01:Gi1/0/24",
+      "bandwidth_mbps": 1000,
+      "latency_ms": 0.1,
+      "routing_protocol": null,
+      "ospf_area": null,
+      "provider": null,
+      "circuit_id": null
+    }
+  ],
+  "vlans": [
+    {
+      "segment_id": "DC1-VLAN100",
+      "site_id": "DC1",
+      "vlan_id": 100,
+      "name": "SERVERS",
+      "subnet": "10.100.100.0/24",
+      "gateway": "10.100.100.1",
+      "gateway_interface_id": "DC1-SW-01:Vlan100"
+    },
+    {
+      "segment_id": "NYC-VLAN10",
+      "site_id": "NYC",
+      "vlan_id": 10,
+      "name": "USERS",
+      "subnet": "10.10.10.0/24",
+      "gateway": "10.10.10.1",
+      "gateway_interface_id": "NYC-RTR-01:Gi0/0/1.10"
+    },
+    {
+      "segment_id": "NYC-VLAN20",
+      "site_id": "NYC",
+      "vlan_id": 20,
+      "name": "VOICE",
+      "subnet": "10.10.20.0/24",
+      "gateway": "10.10.20.1",
+      "gateway_interface_id": "NYC-RTR-01:Gi0/0/1.20"
+    },
+    {
+      "segment_id": "NYC-VLAN99",
+      "site_id": "NYC",
+      "vlan_id": 99,
+      "name": "MGMT",
+      "subnet": "10.10.99.0/24",
+      "gateway": "10.10.99.1",
+      "gateway_interface_id": "NYC-RTR-01:Gi0/0/1.99"
+    },
+    {
+      "segment_id": "SIN-VLAN10",
+      "site_id": "SIN",
+      "vlan_id": 10,
+      "name": "USERS",
+      "subnet": "10.20.10.0/24",
+      "gateway": "10.20.10.1",
+      "gateway_interface_id": "SIN-RTR-01:Gi0/0/1.10"
+    },
+    {
+      "segment_id": "SIN-VLAN20",
+      "site_id": "SIN",
+      "vlan_id": 20,
+      "name": "VOICE",
+      "subnet": "10.20.20.0/24",
+      "gateway": "10.20.20.1",
+      "gateway_interface_id": "SIN-RTR-01:Gi0/0/1.20"
+    },
+    {
+      "segment_id": "SIN-VLAN99",
+      "site_id": "SIN",
+      "vlan_id": 99,
+      "name": "MGMT",
+      "subnet": "10.20.99.0/24",
+      "gateway": "10.20.99.1",
+      "gateway_interface_id": "SIN-RTR-01:Gi0/0/1.99"
+    },
+    {
+      "segment_id": "BLR-VLAN10",
+      "site_id": "BLR",
+      "vlan_id": 10,
+      "name": "USERS",
+      "subnet": "10.30.10.0/24",
+      "gateway": "10.30.10.1",
+      "gateway_interface_id": "BLR-RTR-01:Gi0/0/1.10"
+    },
+    {
+      "segment_id": "BLR-VLAN20",
+      "site_id": "BLR",
+      "vlan_id": 20,
+      "name": "VOICE",
+      "subnet": "10.30.20.0/24",
+      "gateway": "10.30.20.1",
+      "gateway_interface_id": "BLR-RTR-01:Gi0/0/1.20"
+    },
+    {
+      "segment_id": "BLR-VLAN99",
+      "site_id": "BLR",
+      "vlan_id": 99,
+      "name": "MGMT",
+      "subnet": "10.30.99.0/24",
+      "gateway": "10.30.99.1",
+      "gateway_interface_id": "BLR-RTR-01:Gi0/0/1.99"
+    }
+  ],
+  "relationships": [
+    {
+      "source_device_id": "DC1-SRV-DNS-01",
+      "target_device_id": "DC1-SW-01",
+      "relationship_type": "upstream",
+      "description": "Server access uplink"
+    },
+    {
+      "source_device_id": "DC1-SRV-DNS-02",
+      "target_device_id": "DC1-SW-01",
+      "relationship_type": "upstream",
+      "description": "Server access uplink"
+    },
+    {
+      "source_device_id": "DC1-SRV-DHCP-01",
+      "target_device_id": "DC1-SW-01",
+      "relationship_type": "upstream",
+      "description": "Server access uplink"
+    },
+    {
+      "source_device_id": "DC1-SRV-AUTH-01",
+      "target_device_id": "DC1-SW-01",
+      "relationship_type": "upstream",
+      "description": "Server access uplink"
+    },
+    {
+      "source_device_id": "DC1-SRV-APP-01",
+      "target_device_id": "DC1-SW-01",
+      "relationship_type": "upstream",
+      "description": "Server access uplink"
+    },
+    {
+      "source_device_id": "NYC-SW-01",
+      "target_device_id": "NYC-RTR-01",
+      "relationship_type": "upstream",
+      "description": "Access switch uplink to WAN edge"
+    },
+    {
+      "source_device_id": "NYC-RTR-01",
+      "target_device_id": "CORE-RTR-01",
+      "relationship_type": "upstream",
+      "description": "WAN uplink to core router"
+    },
+    {
+      "source_device_id": "NYC-RTR-01",
+      "target_device_id": "DC1-SRV-DHCP-01",
+      "relationship_type": "depends_on",
+      "description": "DHCP relay target for branch VLANs"
+    },
+    {
+      "source_device_id": "NYC-SW-01",
+      "target_device_id": "DC1-SRV-AUTH-01",
+      "relationship_type": "depends_on",
+      "description": "RADIUS server for 802.1X"
+    },
+    {
+      "source_device_id": "SIN-SW-01",
+      "target_device_id": "SIN-RTR-01",
+      "relationship_type": "upstream",
+      "description": "Access switch uplink to WAN edge"
+    },
+    {
+      "source_device_id": "SIN-RTR-01",
+      "target_device_id": "CORE-RTR-01",
+      "relationship_type": "upstream",
+      "description": "WAN uplink to core router"
+    },
+    {
+      "source_device_id": "SIN-RTR-01",
+      "target_device_id": "DC1-SRV-DHCP-01",
+      "relationship_type": "depends_on",
+      "description": "DHCP relay target for branch VLANs"
+    },
+    {
+      "source_device_id": "SIN-SW-01",
+      "target_device_id": "DC1-SRV-AUTH-01",
+      "relationship_type": "depends_on",
+      "description": "RADIUS server for 802.1X"
+    },
+    {
+      "source_device_id": "BLR-SW-01",
+      "target_device_id": "BLR-RTR-01",
+      "relationship_type": "upstream",
+      "description": "Access switch uplink to WAN edge"
+    },
+    {
+      "source_device_id": "BLR-RTR-01",
+      "target_device_id": "CORE-RTR-02",
+      "relationship_type": "upstream",
+      "description": "WAN uplink to core router"
+    },
+    {
+      "source_device_id": "BLR-RTR-01",
+      "target_device_id": "DC1-SRV-DHCP-01",
+      "relationship_type": "depends_on",
+      "description": "DHCP relay target for branch VLANs"
+    },
+    {
+      "source_device_id": "BLR-SW-01",
+      "target_device_id": "DC1-SRV-AUTH-01",
+      "relationship_type": "depends_on",
+      "description": "RADIUS server for 802.1X"
+    },
+    {
+      "source_device_id": "CORE-RTR-01",
+      "target_device_id": "CORE-RTR-02",
+      "relationship_type": "redundant_peer",
+      "description": "Core router pair"
+    },
+    {
+      "source_device_id": "CORE-FW-01",
+      "target_device_id": "CORE-SW-01",
+      "relationship_type": "upstream",
+      "description": "Internet edge firewall inside uplink"
+    },
+    {
+      "source_device_id": "DC1-FW-01",
+      "target_device_id": "CORE-SW-01",
+      "relationship_type": "upstream",
+      "description": "Data centre metro uplink"
+    },
+    {
+      "source_device_id": "DC1-SW-01",
+      "target_device_id": "DC1-FW-01",
+      "relationship_type": "upstream",
+      "description": "Data centre switch uplink"
+    },
+    {
+      "source_device_id": "DC1-SRV-DNS-01",
+      "target_device_id": "DC1-SRV-DNS-02",
+      "relationship_type": "redundant_peer",
+      "description": "Primary and secondary DNS"
+    },
+    {
+      "source_device_id": "DC1-SRV-APP-01",
+      "target_device_id": "DC1-SRV-DNS-01",
+      "relationship_type": "depends_on",
+      "description": "Name resolution for application back ends"
+    }
+  ],
+  "paths": [
+    {
+      "path_id": "PATH-NYC-APPLICATION",
+      "name": "New York Branch application path to DC1-SRV-APP-01",
+      "service": "application",
+      "source_site_id": "NYC",
+      "device_ids": [
+        "NYC-SW-01",
+        "NYC-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-APP-01"
+      ],
+      "link_ids": [
+        "LNK-NYC-RTR01-SW01",
+        "LNK-WAN-NYC",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-APP-01"
+      ]
+    },
+    {
+      "path_id": "PATH-NYC-AUTHENTICATION",
+      "name": "New York Branch authentication path to DC1-SRV-AUTH-01",
+      "service": "authentication",
+      "source_site_id": "NYC",
+      "device_ids": [
+        "NYC-SW-01",
+        "NYC-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-AUTH-01"
+      ],
+      "link_ids": [
+        "LNK-NYC-RTR01-SW01",
+        "LNK-WAN-NYC",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-AUTH-01"
+      ]
+    },
+    {
+      "path_id": "PATH-NYC-DHCP",
+      "name": "New York Branch dhcp path to DC1-SRV-DHCP-01",
+      "service": "dhcp",
+      "source_site_id": "NYC",
+      "device_ids": [
+        "NYC-SW-01",
+        "NYC-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-DHCP-01"
+      ],
+      "link_ids": [
+        "LNK-NYC-RTR01-SW01",
+        "LNK-WAN-NYC",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-DHCP-01"
+      ]
+    },
+    {
+      "path_id": "PATH-NYC-DNS",
+      "name": "New York Branch dns path to DC1-SRV-DNS-01",
+      "service": "dns",
+      "source_site_id": "NYC",
+      "device_ids": [
+        "NYC-SW-01",
+        "NYC-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-DNS-01"
+      ],
+      "link_ids": [
+        "LNK-NYC-RTR01-SW01",
+        "LNK-WAN-NYC",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-DNS-01"
+      ]
+    },
+    {
+      "path_id": "PATH-NYC-INTERNET",
+      "name": "New York Branch internet path to CORE-FW-01",
+      "service": "internet",
+      "source_site_id": "NYC",
+      "device_ids": [
+        "NYC-SW-01",
+        "NYC-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "CORE-FW-01"
+      ],
+      "link_ids": [
+        "LNK-NYC-RTR01-SW01",
+        "LNK-WAN-NYC",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-SW01-FW01"
+      ]
+    },
+    {
+      "path_id": "PATH-SIN-APPLICATION",
+      "name": "Singapore Branch application path to DC1-SRV-APP-01",
+      "service": "application",
+      "source_site_id": "SIN",
+      "device_ids": [
+        "SIN-SW-01",
+        "SIN-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-APP-01"
+      ],
+      "link_ids": [
+        "LNK-SIN-RTR01-SW01",
+        "LNK-WAN-SIN",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-APP-01"
+      ]
+    },
+    {
+      "path_id": "PATH-SIN-AUTHENTICATION",
+      "name": "Singapore Branch authentication path to DC1-SRV-AUTH-01",
+      "service": "authentication",
+      "source_site_id": "SIN",
+      "device_ids": [
+        "SIN-SW-01",
+        "SIN-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-AUTH-01"
+      ],
+      "link_ids": [
+        "LNK-SIN-RTR01-SW01",
+        "LNK-WAN-SIN",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-AUTH-01"
+      ]
+    },
+    {
+      "path_id": "PATH-SIN-DHCP",
+      "name": "Singapore Branch dhcp path to DC1-SRV-DHCP-01",
+      "service": "dhcp",
+      "source_site_id": "SIN",
+      "device_ids": [
+        "SIN-SW-01",
+        "SIN-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-DHCP-01"
+      ],
+      "link_ids": [
+        "LNK-SIN-RTR01-SW01",
+        "LNK-WAN-SIN",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-DHCP-01"
+      ]
+    },
+    {
+      "path_id": "PATH-SIN-DNS",
+      "name": "Singapore Branch dns path to DC1-SRV-DNS-01",
+      "service": "dns",
+      "source_site_id": "SIN",
+      "device_ids": [
+        "SIN-SW-01",
+        "SIN-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-DNS-01"
+      ],
+      "link_ids": [
+        "LNK-SIN-RTR01-SW01",
+        "LNK-WAN-SIN",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-DNS-01"
+      ]
+    },
+    {
+      "path_id": "PATH-SIN-INTERNET",
+      "name": "Singapore Branch internet path to CORE-FW-01",
+      "service": "internet",
+      "source_site_id": "SIN",
+      "device_ids": [
+        "SIN-SW-01",
+        "SIN-RTR-01",
+        "CORE-RTR-01",
+        "CORE-SW-01",
+        "CORE-FW-01"
+      ],
+      "link_ids": [
+        "LNK-SIN-RTR01-SW01",
+        "LNK-WAN-SIN",
+        "LNK-CORE-RTR01-SW01",
+        "LNK-CORE-SW01-FW01"
+      ]
+    },
+    {
+      "path_id": "PATH-BLR-APPLICATION",
+      "name": "Bengaluru Branch application path to DC1-SRV-APP-01",
+      "service": "application",
+      "source_site_id": "BLR",
+      "device_ids": [
+        "BLR-SW-01",
+        "BLR-RTR-01",
+        "CORE-RTR-02",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-APP-01"
+      ],
+      "link_ids": [
+        "LNK-BLR-RTR01-SW01",
+        "LNK-WAN-BLR",
+        "LNK-CORE-RTR02-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-APP-01"
+      ]
+    },
+    {
+      "path_id": "PATH-BLR-AUTHENTICATION",
+      "name": "Bengaluru Branch authentication path to DC1-SRV-AUTH-01",
+      "service": "authentication",
+      "source_site_id": "BLR",
+      "device_ids": [
+        "BLR-SW-01",
+        "BLR-RTR-01",
+        "CORE-RTR-02",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-AUTH-01"
+      ],
+      "link_ids": [
+        "LNK-BLR-RTR01-SW01",
+        "LNK-WAN-BLR",
+        "LNK-CORE-RTR02-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-AUTH-01"
+      ]
+    },
+    {
+      "path_id": "PATH-BLR-DHCP",
+      "name": "Bengaluru Branch dhcp path to DC1-SRV-DHCP-01",
+      "service": "dhcp",
+      "source_site_id": "BLR",
+      "device_ids": [
+        "BLR-SW-01",
+        "BLR-RTR-01",
+        "CORE-RTR-02",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-DHCP-01"
+      ],
+      "link_ids": [
+        "LNK-BLR-RTR01-SW01",
+        "LNK-WAN-BLR",
+        "LNK-CORE-RTR02-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-DHCP-01"
+      ]
+    },
+    {
+      "path_id": "PATH-BLR-DNS",
+      "name": "Bengaluru Branch dns path to DC1-SRV-DNS-01",
+      "service": "dns",
+      "source_site_id": "BLR",
+      "device_ids": [
+        "BLR-SW-01",
+        "BLR-RTR-01",
+        "CORE-RTR-02",
+        "CORE-SW-01",
+        "DC1-FW-01",
+        "DC1-SW-01",
+        "DC1-SRV-DNS-01"
+      ],
+      "link_ids": [
+        "LNK-BLR-RTR01-SW01",
+        "LNK-WAN-BLR",
+        "LNK-CORE-RTR02-SW01",
+        "LNK-CORE-DC1-METRO",
+        "LNK-DC1-FW01-SW01",
+        "LNK-DC1-SRV-DNS-01"
+      ]
+    },
+    {
+      "path_id": "PATH-BLR-INTERNET",
+      "name": "Bengaluru Branch internet path to CORE-FW-01",
+      "service": "internet",
+      "source_site_id": "BLR",
+      "device_ids": [
+        "BLR-SW-01",
+        "BLR-RTR-01",
+        "CORE-RTR-02",
+        "CORE-SW-01",
+        "CORE-FW-01"
+      ],
+      "link_ids": [
+        "LNK-BLR-RTR01-SW01",
+        "LNK-WAN-BLR",
+        "LNK-CORE-RTR02-SW01",
+        "LNK-CORE-SW01-FW01"
+      ]
+    }
+  ]
+}

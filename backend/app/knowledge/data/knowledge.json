@@ -1,0 +1,2728 @@
+{
+  "schema_version": "1.0.0",
+  "sources": [
+    {
+      "source_id": "SRC-SYNTHETIC-PLAYBOOKS",
+      "title": "Synthetic troubleshooting playbooks",
+      "kind": "synthetic_internal",
+      "revision": "1.0.0"
+    },
+    {
+      "source_id": "SRC-SYNTHETIC-RUNBOOKS",
+      "title": "Synthetic site runbooks",
+      "kind": "synthetic_internal",
+      "revision": "1.0.0"
+    },
+    {
+      "source_id": "SRC-SYNTHETIC-REFERENCE",
+      "title": "Synthetic diagnostic reference material",
+      "kind": "synthetic_internal",
+      "revision": "1.0.0"
+    }
+  ],
+  "playbooks": [
+    {
+      "record_id": "PB-WAN-FAILURE",
+      "title": "WAN circuit failure at a branch",
+      "version": "1.0.0",
+      "fault_domains": [
+        "wan_isp"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "router"
+        ],
+        "services": []
+      },
+      "tags": [
+        "wan",
+        "circuit",
+        "branch-outage",
+        "bgp"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "A branch loses all connectivity to the core because its WAN circuit or WAN edge interface is down.",
+      "category": "connectivity",
+      "layers": [
+        "physical",
+        "network"
+      ],
+      "symptoms": [
+        "All users at one branch lose access to every corporate service",
+        "Branch router unreachable from monitoring",
+        "Internet and ERP both unavailable at the same site"
+      ],
+      "indicator_codes": [
+        "NO_ROUTE_TO_DESTINATION",
+        "LINK_DOWN_AT_FAILURE_POINT",
+        "INTERFACE_DOWN",
+        "ADJACENCY_FAILED",
+        "ADJACENCY_LOSS_FOLLOWS_INTERFACE_DOWN",
+        "CARRIER_LOSS",
+        "LINK_DOWN",
+        "BGP_NEIGHBOR_DOWN"
+      ],
+      "possible_causes": [
+        "Carrier circuit outage or loss of signal",
+        "WAN edge interface or optic failure",
+        "Upstream core router failure affecting the circuit termination"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-WAN-PATH",
+          "description": "Branch router has no route towards the data centre",
+          "codes": [
+            "NO_ROUTE_TO_DESTINATION"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Confirm where forwarding stops"
+          }
+        },
+        {
+          "requirement_id": "EV-WAN-LINK",
+          "description": "WAN interface reports operational status down",
+          "codes": [
+            "LINK_DOWN_AT_FAILURE_POINT",
+            "INTERFACE_DOWN"
+          ],
+          "tool": {
+            "tool": "get_interface_stats",
+            "purpose": "Confirm the physical state of the WAN link"
+          }
+        },
+        {
+          "requirement_id": "EV-WAN-PEER",
+          "description": "Core-side termination is alive",
+          "codes": [
+            "DEVICE_AVAILABLE",
+            "DEVICE_AVAILABLE_WITH_FAULTS"
+          ],
+          "tool": {
+            "tool": "check_device_availability",
+            "purpose": "Exclude an upstream device failure"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Evaluate reachability from the branch switch to a data centre server",
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Locate where the forward path stops"
+          },
+          "commands": [],
+          "expected_observation": "Path stops at the branch WAN edge"
+        },
+        {
+          "order": 2,
+          "action": "Inspect the WAN interface state on the branch router",
+          "tool": {
+            "tool": "get_interface_stats",
+            "purpose": "Interface state"
+          },
+          "commands": [
+            {
+              "text": "show interfaces {interface}",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Interface state, line protocol and error counters",
+              "illustrative": true
+            },
+            {
+              "text": "ping {peer_ip} source {interface} repeat 100",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "Loss and latency to the directly connected peer",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Line protocol down with carrier loss"
+        },
+        {
+          "order": 3,
+          "action": "Check routing adjacency over the WAN link",
+          "tool": {
+            "tool": "analyze_routing_adjacency",
+            "purpose": "Adjacency state"
+          },
+          "commands": [
+            {
+              "text": "show ip bgp summary",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "BGP session state and prefixes received",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "BGP or OSPF neighbor down after the interface failure"
+        },
+        {
+          "order": 4,
+          "action": "Confirm the core-side device is still reporting telemetry",
+          "tool": {
+            "tool": "check_device_availability",
+            "purpose": "Upstream device state"
+          },
+          "commands": [],
+          "expected_observation": "Core router available with one interface down"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "WAN interface down and the core peer is available",
+          "conclusion": "Treat as a carrier or circuit fault and engage the provider",
+          "next_record_id": null
+        },
+        {
+          "condition": "Several branches fail at once through the same core router",
+          "conclusion": "Investigate the shared upstream device first",
+          "next_record_id": "PB-SHARED-DEVICE-FAILURE"
+        },
+        {
+          "condition": "Interfaces up but routes missing",
+          "conclusion": "Investigate routing adjacency instead",
+          "next_record_id": "PB-OSPF-ADJACENCY-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Circuit down for more than 15 minutes with carrier loss logged",
+          "team": "WAN Operations / carrier liaison",
+          "priority": "p1"
+        }
+      ],
+      "related_ids": [
+        "PB-SHARED-DEVICE-FAILURE",
+        "PB-PACKET-LOSS",
+        "DP-INTERFACE-HEALTH"
+      ]
+    },
+    {
+      "record_id": "PB-PACKET-LOSS",
+      "title": "Packet loss and degradation on a WAN circuit",
+      "version": "1.0.0",
+      "fault_domains": [
+        "wan_isp",
+        "interface_link"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "router"
+        ],
+        "services": []
+      },
+      "tags": [
+        "packet-loss",
+        "latency",
+        "crc",
+        "degradation"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "Users at a branch report slowness and choppy calls while the WAN circuit stays up but drops packets.",
+      "category": "performance",
+      "layers": [
+        "physical",
+        "data_link"
+      ],
+      "symptoms": [
+        "Slow application response at one branch",
+        "Choppy or dropped voice calls",
+        "Slow or intermittent name resolution"
+      ],
+      "indicator_codes": [
+        "PACKET_LOSS_MEASURED",
+        "PHYSICAL_LAYER_DEGRADATION_SUSPECTED",
+        "HIGH_ERROR_COUNT",
+        "HIGH_DROP_COUNT",
+        "ERROR_COUNT_INCREASE",
+        "HIGH_LATENCY",
+        "INTERFACE_ERRORS",
+        "SLA_THRESHOLD_EXCEEDED"
+      ],
+      "possible_causes": [
+        "Physical degradation on the carrier circuit",
+        "Faulty optic, cable or interface",
+        "Congestion on an undersized circuit"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-LOSS-MEASURED",
+          "description": "Packet loss above threshold on the WAN interface",
+          "codes": [
+            "PACKET_LOSS_MEASURED"
+          ],
+          "tool": {
+            "tool": "analyze_packet_loss",
+            "purpose": "Measure the loss pattern"
+          }
+        },
+        {
+          "requirement_id": "EV-LOSS-ERRORS",
+          "description": "Interface errors rise alongside the loss",
+          "codes": [
+            "HIGH_ERROR_COUNT",
+            "ERROR_COUNT_INCREASE"
+          ],
+          "tool": {
+            "tool": "analyze_interface_errors",
+            "purpose": "Distinguish physical faults from congestion"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Analyze packet loss on the branch WAN interface",
+          "tool": {
+            "tool": "analyze_packet_loss",
+            "purpose": "Loss pattern"
+          },
+          "commands": [
+            {
+              "text": "ping {peer_ip} source {interface} repeat 100",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "Loss and latency to the directly connected peer",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Sustained loss above 1 percent"
+        },
+        {
+          "order": 2,
+          "action": "Analyze interface errors and drops on the same interface",
+          "tool": {
+            "tool": "analyze_interface_errors",
+            "purpose": "Error pattern"
+          },
+          "commands": [
+            {
+              "text": "show interfaces {interface}",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Interface state, line protocol and error counters",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "CRC and input errors rising with the loss"
+        },
+        {
+          "order": 3,
+          "action": "Compare utilization against the loss samples",
+          "tool": {
+            "tool": "get_interface_stats",
+            "purpose": "Utilization context"
+          },
+          "commands": [],
+          "expected_observation": "Utilization below congestion levels"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Loss coincides with rising errors and normal utilization",
+          "conclusion": "Treat as physical or circuit degradation",
+          "next_record_id": null
+        },
+        {
+          "condition": "Loss coincides with utilization above 90 percent",
+          "conclusion": "Treat as congestion and review capacity",
+          "next_record_id": null
+        },
+        {
+          "condition": "Loss measured only while the interface is down",
+          "conclusion": "Treat as an outage",
+          "next_record_id": "PB-WAN-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Sustained loss above 5 percent for more than 10 minutes",
+          "team": "WAN Operations / carrier liaison",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "PB-WAN-FAILURE",
+        "DP-INTERFACE-HEALTH"
+      ]
+    },
+    {
+      "record_id": "PB-OSPF-ADJACENCY-FAILURE",
+      "title": "OSPF adjacency failure with links up",
+      "version": "1.0.0",
+      "fault_domains": [
+        "routing"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "router",
+          "switch"
+        ],
+        "services": []
+      },
+      "tags": [
+        "ospf",
+        "adjacency",
+        "mtu",
+        "routing"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "A site loses routes because an OSPF adjacency is stuck or down even though the physical link reports up.",
+      "category": "routing",
+      "layers": [
+        "network"
+      ],
+      "symptoms": [
+        "Site cannot reach data centre applications while the WAN circuit shows up",
+        "Routes to a site disappear from the core",
+        "Recent configuration change on a WAN edge router"
+      ],
+      "indicator_codes": [
+        "ADJACENCY_STALLED",
+        "ADJACENCY_FAILED",
+        "CONTROL_PLANE_FAILURE_SUSPECTED",
+        "NEIGHBOR_NOT_ESTABLISHED",
+        "ROUTES_WITHDRAWN",
+        "OSPF_ADJACENCY_DOWN",
+        "OSPF_MTU_MISMATCH",
+        "MTU_CHANGE",
+        "CONFIG_CHANGE"
+      ],
+      "possible_causes": [
+        "Interface MTU mismatch between neighbors",
+        "Area, network type or timer mismatch",
+        "Authentication mismatch after a configuration change"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-OSPF-STATE",
+          "description": "Adjacency not FULL while both interfaces are up",
+          "codes": [
+            "ADJACENCY_STALLED",
+            "CONTROL_PLANE_FAILURE_SUSPECTED"
+          ],
+          "tool": {
+            "tool": "analyze_routing_adjacency",
+            "purpose": "Adjacency state"
+          }
+        },
+        {
+          "requirement_id": "EV-OSPF-ROUTES",
+          "description": "Routes withdrawn at the time of the adjacency change",
+          "codes": [
+            "ROUTES_WITHDRAWN",
+            "NO_ROUTE_TO_DESTINATION"
+          ],
+          "tool": {
+            "tool": "get_routing_state",
+            "purpose": "Routing impact"
+          }
+        },
+        {
+          "requirement_id": "EV-OSPF-CHANGE",
+          "description": "Configuration or MTU change shortly before the failure",
+          "codes": [
+            "CONFIG_CHANGE",
+            "MTU_CHANGE"
+          ],
+          "tool": {
+            "tool": "get_device_logs",
+            "purpose": "Preceding change"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Analyze routing adjacencies on the site WAN edge",
+          "tool": {
+            "tool": "analyze_routing_adjacency",
+            "purpose": "Adjacency state"
+          },
+          "commands": [
+            {
+              "text": "show ip ospf neighbor",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "OSPF neighbor list and adjacency state",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Adjacency stuck in EXSTART or similar with links up"
+        },
+        {
+          "order": 2,
+          "action": "Compare OSPF interface parameters on both ends",
+          "tool": null,
+          "commands": [
+            {
+              "text": "show ip ospf interface {interface}",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "OSPF interface parameters including MTU and timers",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "MTU or timers differ between neighbors"
+        },
+        {
+          "order": 3,
+          "action": "Review device logs for recent changes",
+          "tool": {
+            "tool": "get_device_logs",
+            "purpose": "Change history"
+          },
+          "commands": [
+            {
+              "text": "show logging",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Recent device log messages",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Configuration change shortly before the adjacency dropped"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Adjacency stalled with interfaces up and an MTU difference",
+          "conclusion": "Treat as a parameter mismatch introduced by the change",
+          "next_record_id": null
+        },
+        {
+          "condition": "Interfaces down on the adjacency link",
+          "conclusion": "Treat as a link failure",
+          "next_record_id": "PB-WAN-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Routes withdrawn for a whole site",
+          "team": "Network Engineering - Routing",
+          "priority": "p1"
+        }
+      ],
+      "related_ids": [
+        "PB-WAN-FAILURE",
+        "DP-ROUTING-VERIFICATION"
+      ]
+    },
+    {
+      "record_id": "PB-FIREWALL-BLOCKING",
+      "title": "Application traffic blocked by firewall policy",
+      "version": "1.0.0",
+      "fault_domains": [
+        "firewall"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "firewall"
+        ],
+        "services": []
+      },
+      "tags": [
+        "firewall",
+        "policy",
+        "deny",
+        "erp"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "One application fails for a site while the routed path stays healthy, because a firewall rule denies the traffic.",
+      "category": "security",
+      "layers": [
+        "transport",
+        "application"
+      ],
+      "symptoms": [
+        "One application portal times out for a single site",
+        "Denied sessions for the affected application",
+        "Problem started after a security policy change"
+      ],
+      "indicator_codes": [
+        "TRAFFIC_DENIED",
+        "RULE_MODIFIED_IN_RANGE",
+        "POLICY_CHANGE",
+        "PATH_REACHABLE"
+      ],
+      "possible_causes": [
+        "New or reordered deny rule matching the traffic",
+        "Overly broad source or destination object",
+        "Rule shadowing after a policy commit"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-FW-DENY",
+          "description": "Flows to the application denied by a specific rule",
+          "codes": [
+            "TRAFFIC_DENIED"
+          ],
+          "tool": {
+            "tool": "get_firewall_logs",
+            "purpose": "Identify the denying rule"
+          }
+        },
+        {
+          "requirement_id": "EV-FW-CHANGE",
+          "description": "Denying rule modified shortly before the incident",
+          "codes": [
+            "RULE_MODIFIED_IN_RANGE"
+          ],
+          "tool": {
+            "tool": "get_firewall_logs",
+            "purpose": "Correlate with policy changes"
+          }
+        },
+        {
+          "requirement_id": "EV-FW-L3",
+          "description": "Layer-3 path to the application is reachable",
+          "codes": [
+            "PATH_REACHABLE"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Exclude routing faults"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Confirm the layer-3 path from the site to the application",
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Locate where the forward path stops"
+          },
+          "commands": [],
+          "expected_observation": "Path reachable"
+        },
+        {
+          "order": 2,
+          "action": "Query firewall logs for the site and application addresses",
+          "tool": {
+            "tool": "get_firewall_logs",
+            "purpose": "Deny events"
+          },
+          "commands": [
+            {
+              "text": "show log traffic action equal deny",
+              "platform": "pan_os",
+              "device_types": [
+                "firewall"
+              ],
+              "purpose": "Recently denied traffic and matching rules",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Denied flows from the affected site"
+        },
+        {
+          "order": 3,
+          "action": "Review the rule order around the matching rule",
+          "tool": null,
+          "commands": [
+            {
+              "text": "show running security-policy",
+              "platform": "pan_os",
+              "device_types": [
+                "firewall"
+              ],
+              "purpose": "Active security rule order",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Deny rule placed ahead of the expected allow rule"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Denies by a recently modified rule and a reachable path",
+          "conclusion": "Treat as a firewall policy fault",
+          "next_record_id": null
+        },
+        {
+          "condition": "No denies and the path is unreachable",
+          "conclusion": "Investigate connectivity",
+          "next_record_id": "PB-WAN-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Business application denied for a whole site",
+          "team": "Network Security Operations",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "DP-FIREWALL-POLICY"
+      ]
+    },
+    {
+      "record_id": "PB-DHCP-ALLOCATION-FAILURE",
+      "title": "DHCP allocation failure and pool exhaustion",
+      "version": "1.0.0",
+      "fault_domains": [
+        "dhcp"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "server"
+        ],
+        "services": [
+          "dhcp"
+        ]
+      },
+      "tags": [
+        "dhcp",
+        "lease",
+        "pool",
+        "ip-address"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "New clients at a site receive no address because the DHCP pool is exhausted or allocations fail.",
+      "category": "network_services",
+      "layers": [
+        "application"
+      ],
+      "symptoms": [
+        "New laptops show a self-assigned 169.254 address",
+        "Existing users unaffected",
+        "Cannot obtain an IP address"
+      ],
+      "indicator_codes": [
+        "DHCP_POOL_EXHAUSTED",
+        "DHCP_ALLOCATION_FAILURES",
+        "DHCP_IP_CONFLICTS",
+        "DHCP_POOL_HIGH_UTILIZATION"
+      ],
+      "possible_causes": [
+        "Pool too small for the number of clients",
+        "Addresses held in conflict state after DHCPDECLINE",
+        "Lease time too long for the client turnover"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-DHCP-POOL",
+          "description": "Pool utilization at 100 percent",
+          "codes": [
+            "DHCP_POOL_EXHAUSTED"
+          ],
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Pool state"
+          }
+        },
+        {
+          "requirement_id": "EV-DHCP-FAIL",
+          "description": "Allocation failures for new clients",
+          "codes": [
+            "DHCP_ALLOCATION_FAILURES"
+          ],
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Allocation outcome"
+          }
+        },
+        {
+          "requirement_id": "EV-DHCP-L3",
+          "description": "Path from the site to the DHCP server is reachable",
+          "codes": [
+            "PATH_REACHABLE"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Exclude relay path faults"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Check DHCP and DNS status for the site",
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Pool and lease state"
+          },
+          "commands": [],
+          "expected_observation": "Pool exhausted with allocation failures"
+        },
+        {
+          "order": 2,
+          "action": "Confirm the DHCP service is running",
+          "tool": null,
+          "commands": [
+            {
+              "text": "keactrl status",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "DHCP service process state",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Service active"
+        },
+        {
+          "order": 3,
+          "action": "Review server logs for allocation failures and declines",
+          "tool": null,
+          "commands": [
+            {
+              "text": "journalctl -u kea-dhcp4 --since \"1 hour ago\"",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "DHCP allocation failures and declines",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "No-free-lease and DHCPDECLINE messages"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Pool exhausted while the path is reachable",
+          "conclusion": "Treat as a DHCP capacity fault",
+          "next_record_id": null
+        },
+        {
+          "condition": "No transactions from the site at all",
+          "conclusion": "Investigate site connectivity or access control",
+          "next_record_id": "PB-VLAN-AUTHENTICATION-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Pool exhausted for user VLAN",
+          "team": "Infrastructure Services - DHCP/DNS",
+          "priority": "p3"
+        }
+      ],
+      "related_ids": [
+        "DP-DNS-DHCP-SERVICES"
+      ]
+    },
+    {
+      "record_id": "PB-DNS-RESOLUTION-FAILURE",
+      "title": "DNS resolution failure for internal names",
+      "version": "1.0.0",
+      "fault_domains": [
+        "dns"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "server"
+        ],
+        "services": [
+          "dns"
+        ]
+      },
+      "tags": [
+        "dns",
+        "servfail",
+        "zone",
+        "name-resolution"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "Users cannot reach internal services by name because a DNS server fails to resolve the internal zone.",
+      "category": "network_services",
+      "layers": [
+        "application"
+      ],
+      "symptoms": [
+        "Internal host names do not resolve",
+        "Internet sites work",
+        "Access by IP address works"
+      ],
+      "indicator_codes": [
+        "DNS_SERVFAIL",
+        "DNS_SERVER_RESOLUTION_FAULT_SUSPECTED",
+        "ZONE_LOAD_FAILURE",
+        "ZONE_NOT_LOADED",
+        "DNS_LOOKUP_FAILURE"
+      ],
+      "possible_causes": [
+        "Zone file failed to load after a change",
+        "Server process unhealthy",
+        "Forwarder or delegation problem"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-DNS-SERVFAIL",
+          "description": "SERVFAIL responses from one server",
+          "codes": [
+            "DNS_SERVFAIL"
+          ],
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Query results"
+          }
+        },
+        {
+          "requirement_id": "EV-DNS-PEER",
+          "description": "Other servers answer successfully",
+          "codes": [
+            "DNS_SERVER_RESOLUTION_FAULT_SUSPECTED"
+          ],
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Isolate the faulty server"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Check DNS query results for affected sites",
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Query results"
+          },
+          "commands": [],
+          "expected_observation": "SERVFAIL from one server for internal names"
+        },
+        {
+          "order": 2,
+          "action": "Reproduce the failing query against each server",
+          "tool": null,
+          "commands": [
+            {
+              "text": "dig @{dns_server} {domain} A",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "Reproduce a name resolution against one server",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "SERVFAIL from the faulty server only"
+        },
+        {
+          "order": 3,
+          "action": "Inspect zone status and server logs",
+          "tool": null,
+          "commands": [
+            {
+              "text": "rndc zonestatus {zone}",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "Zone load status on the DNS server",
+              "illustrative": true
+            },
+            {
+              "text": "journalctl -u named --since \"1 hour ago\"",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "DNS server log messages",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Zone not loaded due to errors"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "SERVFAIL from one server while others answer",
+          "conclusion": "Treat as a server-side resolution fault",
+          "next_record_id": null
+        },
+        {
+          "condition": "All queries from a site time out",
+          "conclusion": "Investigate connectivity from the site",
+          "next_record_id": "PB-WAN-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Internal zone unavailable on the primary server",
+          "team": "Infrastructure Services - DHCP/DNS",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "DP-DNS-DHCP-SERVICES"
+      ]
+    },
+    {
+      "record_id": "PB-VLAN-AUTHENTICATION-FAILURE",
+      "title": "802.1X authentication failure on access ports",
+      "version": "1.0.0",
+      "fault_domains": [
+        "vlan_authentication"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "switch",
+          "server"
+        ],
+        "services": [
+          "authentication"
+        ]
+      },
+      "tags": [
+        "dot1x",
+        "radius",
+        "authentication",
+        "access-port"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "Wired clients at a site get no network access because 802.1X authentication fails between the switch and RADIUS.",
+      "category": "access_control",
+      "layers": [
+        "data_link"
+      ],
+      "symptoms": [
+        "Wired desktops show authentication failed",
+        "No network on wired desktops",
+        "IP phones unaffected"
+      ],
+      "indicator_codes": [
+        "DOT1X_AUTH_FAILURE",
+        "PORT_UNAUTHORIZED",
+        "RADIUS_SERVER_DEAD",
+        "RADIUS_INVALID_AUTHENTICATOR",
+        "DHCP_TRANSACTIONS_STOPPED"
+      ],
+      "possible_causes": [
+        "RADIUS shared secret mismatch",
+        "RADIUS server unreachable or rejecting requests",
+        "Port authentication configuration change"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-AUTH-SWITCH",
+          "description": "802.1X failures on the access switch",
+          "codes": [
+            "DOT1X_AUTH_FAILURE",
+            "PORT_UNAUTHORIZED"
+          ],
+          "tool": {
+            "tool": "get_device_logs",
+            "purpose": "Access switch events"
+          }
+        },
+        {
+          "requirement_id": "EV-AUTH-RADIUS",
+          "description": "RADIUS rejections or dead-server events",
+          "codes": [
+            "RADIUS_INVALID_AUTHENTICATOR",
+            "RADIUS_SERVER_DEAD"
+          ],
+          "tool": {
+            "tool": "get_device_logs",
+            "purpose": "RADIUS side"
+          }
+        },
+        {
+          "requirement_id": "EV-AUTH-L3",
+          "description": "Path from the switch to the RADIUS server is reachable",
+          "codes": [
+            "PATH_REACHABLE"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Exclude connectivity faults"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Review warnings on the access switch",
+          "tool": {
+            "tool": "get_device_logs",
+            "purpose": "Switch events"
+          },
+          "commands": [
+            {
+              "text": "show authentication sessions interface {interface} details",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "switch"
+              ],
+              "purpose": "802.1X session state for a port",
+              "illustrative": true
+            },
+            {
+              "text": "show aaa servers",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "switch"
+              ],
+              "purpose": "RADIUS server state and response counters",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "DOT1X failures and unauthorized ports"
+        },
+        {
+          "order": 2,
+          "action": "Review the RADIUS server logs",
+          "tool": null,
+          "commands": [
+            {
+              "text": "journalctl -u freeradius --since \"1 hour ago\"",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "RADIUS request rejections",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Requests dropped for an invalid authenticator"
+        },
+        {
+          "order": 3,
+          "action": "Confirm reachability between the switch and the RADIUS server",
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Locate where the forward path stops"
+          },
+          "commands": [],
+          "expected_observation": "Path reachable"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Server rejects requests for an invalid authenticator",
+          "conclusion": "Treat as a shared secret mismatch",
+          "next_record_id": null
+        },
+        {
+          "condition": "Path to the RADIUS server unreachable",
+          "conclusion": "Investigate connectivity",
+          "next_record_id": "PB-WAN-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Wired access lost for a site",
+          "team": "Network Access Control team",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "PB-DHCP-ALLOCATION-FAILURE"
+      ]
+    },
+    {
+      "record_id": "PB-SHARED-DEVICE-FAILURE",
+      "title": "Shared upstream device failure affecting several sites",
+      "version": "1.0.0",
+      "fault_domains": [
+        "shared_infrastructure",
+        "network_device_failure"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [
+          "router",
+          "switch"
+        ],
+        "services": []
+      },
+      "tags": [
+        "shared-device",
+        "core",
+        "multi-site",
+        "power"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "Several sites fail at the same time because a shared core device on their common path has failed.",
+      "category": "infrastructure",
+      "layers": [
+        "physical",
+        "network"
+      ],
+      "symptoms": [
+        "Two or more branches lose connectivity simultaneously",
+        "Several sites offline through one core router",
+        "Core router not responding to monitoring"
+      ],
+      "indicator_codes": [
+        "TELEMETRY_GAP",
+        "PEER_LINKS_DOWN",
+        "PEER_ADJACENCIES_LOST",
+        "DEVICE_FAILURE_LIKELY",
+        "DEVICE_UNREACHABLE",
+        "POWER_SUPPLY_FAILURE",
+        "SYSTEM_SHUTDOWN",
+        "NO_ROUTE_TO_DESTINATION"
+      ],
+      "possible_causes": [
+        "Power failure on a shared core router",
+        "Hardware or software crash of a shared device",
+        "Failure of the shared aggregation link"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-SHARED-GAP",
+          "description": "Telemetry gap from the shared device",
+          "codes": [
+            "TELEMETRY_GAP"
+          ],
+          "tool": {
+            "tool": "check_device_availability",
+            "purpose": "Device telemetry"
+          }
+        },
+        {
+          "requirement_id": "EV-SHARED-PEERS",
+          "description": "Peers report links to the device down",
+          "codes": [
+            "PEER_LINKS_DOWN",
+            "PEER_ADJACENCIES_LOST"
+          ],
+          "tool": {
+            "tool": "check_device_availability",
+            "purpose": "Independent peer evidence"
+          }
+        },
+        {
+          "requirement_id": "EV-SHARED-PATHS",
+          "description": "Affected paths share the device",
+          "codes": [
+            "NO_ROUTE_TO_DESTINATION"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Path correlation"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Evaluate reachability for every affected site",
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Locate where the forward path stops"
+          },
+          "commands": [],
+          "expected_observation": "Paths fail at branches served by the same core router"
+        },
+        {
+          "order": 2,
+          "action": "Identify devices common to the affected paths",
+          "tool": {
+            "tool": "analyze_network_dependencies",
+            "purpose": "Shared dependencies"
+          },
+          "commands": [],
+          "expected_observation": "One shared upstream device"
+        },
+        {
+          "order": 3,
+          "action": "Check availability of the shared device",
+          "tool": {
+            "tool": "check_device_availability",
+            "purpose": "Device state"
+          },
+          "commands": [
+            {
+              "text": "show environment power",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Power supply status, via out-of-band console",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Telemetry gap corroborated by peers"
+        },
+        {
+          "order": 4,
+          "action": "Confirm peer interfaces facing the device",
+          "tool": null,
+          "commands": [
+            {
+              "text": "show interfaces {interface}",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Interface state, line protocol and error counters",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Peer interfaces down"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Shared device silent and all peers report links down",
+          "conclusion": "Treat as a shared device failure, not separate branch faults",
+          "next_record_id": null
+        },
+        {
+          "condition": "Shared device reporting telemetry",
+          "conclusion": "Investigate each branch circuit separately",
+          "next_record_id": "PB-WAN-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Shared core device unavailable",
+          "team": "Network Operations - Core and Data Centre",
+          "priority": "p1"
+        }
+      ],
+      "related_ids": [
+        "PB-WAN-FAILURE",
+        "DP-TOPOLOGY-DEPENDENCIES"
+      ]
+    },
+    {
+      "record_id": "PB-GENERAL-TRIAGE",
+      "title": "General network incident triage",
+      "version": "1.0.0",
+      "fault_domains": [],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "triage",
+        "general",
+        "first-response"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "Structured first steps for any network incident before a fault domain is known.",
+      "category": "general",
+      "layers": [
+        "physical",
+        "network",
+        "application"
+      ],
+      "symptoms": [
+        "Users report a network problem with unclear scope",
+        "Intermittent or unexplained slowness",
+        "Unknown cause of service disruption"
+      ],
+      "indicator_codes": [],
+      "possible_causes": [
+        "Connectivity failure",
+        "Service failure",
+        "Performance degradation",
+        "Policy or access control change"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-TRIAGE-PATH",
+          "description": "Reachability outcome for the affected site",
+          "codes": [
+            "PATH_REACHABLE",
+            "PATH_UNREACHABLE"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Establish whether the path works"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Establish the affected sites, services and start time",
+          "tool": null,
+          "commands": [],
+          "expected_observation": "Scope and onset recorded"
+        },
+        {
+          "order": 2,
+          "action": "Evaluate reachability from the site to the affected service",
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Locate where the forward path stops"
+          },
+          "commands": [],
+          "expected_observation": "Path reachable or a failure point identified"
+        },
+        {
+          "order": 3,
+          "action": "Check site DHCP and DNS status",
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Service health"
+          },
+          "commands": [],
+          "expected_observation": "Service health for the site"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Path unreachable",
+          "conclusion": "Follow connectivity playbooks",
+          "next_record_id": "PB-WAN-FAILURE"
+        },
+        {
+          "condition": "Path reachable but a service fails",
+          "conclusion": "Follow service playbooks",
+          "next_record_id": "DP-DNS-DHCP-SERVICES"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "No fault domain identified after triage",
+          "team": "Network Operations - L2 triage",
+          "priority": "p3"
+        }
+      ],
+      "related_ids": [
+        "DP-TOPOLOGY-DEPENDENCIES"
+      ]
+    },
+    {
+      "record_id": "PB-TOPOLOGY-INVESTIGATION",
+      "title": "Topology and dependency investigation",
+      "version": "1.0.0",
+      "fault_domains": [],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "topology",
+        "dependencies",
+        "shared-path"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-PLAYBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "playbook",
+      "description": "Use topology data to find upstream, downstream and shared dependencies before attributing a fault.",
+      "category": "general",
+      "layers": [
+        "network"
+      ],
+      "symptoms": [
+        "Multiple sites or services affected",
+        "Unclear which device sits on the failing path"
+      ],
+      "indicator_codes": [
+        "PATH_UNREACHABLE"
+      ],
+      "possible_causes": [
+        "Shared upstream failure",
+        "Single-site failure mistaken for a wider outage"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-TOPO-PATHS",
+          "description": "Affected paths and their common devices",
+          "codes": [
+            "PATH_UNREACHABLE",
+            "NO_ROUTE_TO_DESTINATION"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Path correlation"
+          }
+        }
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "action": "Retrieve topology for each affected site",
+          "tool": {
+            "tool": "get_topology",
+            "purpose": "Site topology"
+          },
+          "commands": [],
+          "expected_observation": "Devices, links and dependencies listed"
+        },
+        {
+          "order": 2,
+          "action": "Compare dependencies across affected sites",
+          "tool": {
+            "tool": "analyze_network_dependencies",
+            "purpose": "Shared dependencies"
+          },
+          "commands": [],
+          "expected_observation": "Shared devices identified"
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "A device is common to all affected paths",
+          "conclusion": "Investigate that device first",
+          "next_record_id": "PB-SHARED-DEVICE-FAILURE"
+        }
+      ],
+      "escalation": [
+        {
+          "condition": "Shared dependency suspected but unverified",
+          "team": "Network Operations - Core and Data Centre",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "DP-TOPOLOGY-DEPENDENCIES"
+      ]
+    }
+  ],
+  "runbooks": [
+    {
+      "record_id": "RB-NYC-BRANCH",
+      "title": "New York branch WAN edge and access runbook",
+      "version": "1.0.0",
+      "fault_domains": [
+        "wan_isp",
+        "routing",
+        "vlan_authentication"
+      ],
+      "applicability": {
+        "site_ids": [
+          "NYC"
+        ],
+        "device_types": [
+          "router",
+          "switch"
+        ],
+        "services": []
+      },
+      "tags": [
+        "branch",
+        "nyc",
+        "bgp"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-RUNBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "runbook",
+      "context": "The New York branch connects through NYC-RTR-01 over a single BGP WAN circuit; users attach to NYC-SW-01 with 802.1X on the user VLAN.",
+      "preconditions": [
+        "Out-of-band or console access to the branch devices",
+        "Carrier contact details for the WAN circuit"
+      ],
+      "procedures": [
+        {
+          "order": 1,
+          "action": "Verify the WAN interface and peer reachability on the branch router",
+          "tool": {
+            "tool": "get_interface_stats",
+            "purpose": "WAN interface"
+          },
+          "commands": [
+            {
+              "text": "show interfaces {interface}",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Interface state, line protocol and error counters",
+              "illustrative": true
+            },
+            {
+              "text": "ping {peer_ip} source {interface} repeat 100",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "Loss and latency to the directly connected peer",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Interface up with no loss"
+        },
+        {
+          "order": 2,
+          "action": "Verify the BGP session to the core",
+          "tool": {
+            "tool": "analyze_routing_adjacency",
+            "purpose": "Adjacency"
+          },
+          "commands": [
+            {
+              "text": "show ip bgp summary",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "BGP session state and prefixes received",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Session established"
+        },
+        {
+          "order": 3,
+          "action": "Verify 802.1X sessions on user ports",
+          "tool": null,
+          "commands": [
+            {
+              "text": "show authentication sessions interface {interface} details",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "switch"
+              ],
+              "purpose": "802.1X session state for a port",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Ports authorized"
+        }
+      ],
+      "verification": [
+        "Users can reach the ERP service",
+        "Branch router routing table contains the data centre prefix"
+      ],
+      "escalation": [
+        {
+          "condition": "WAN circuit down",
+          "team": "WAN Operations / carrier liaison",
+          "priority": "p1"
+        },
+        {
+          "condition": "802.1X failing on several ports",
+          "team": "Network Access Control team",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "PB-WAN-FAILURE",
+        "PB-VLAN-AUTHENTICATION-FAILURE"
+      ]
+    },
+    {
+      "record_id": "RB-SIN-BRANCH",
+      "title": "Singapore branch WAN edge and access runbook",
+      "version": "1.0.0",
+      "fault_domains": [
+        "wan_isp",
+        "routing",
+        "vlan_authentication"
+      ],
+      "applicability": {
+        "site_ids": [
+          "SIN"
+        ],
+        "device_types": [
+          "router",
+          "switch"
+        ],
+        "services": []
+      },
+      "tags": [
+        "branch",
+        "sin",
+        "bgp"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-RUNBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "runbook",
+      "context": "The Singapore branch connects through SIN-RTR-01 over a single BGP WAN circuit; users attach to SIN-SW-01 with 802.1X on the user VLAN.",
+      "preconditions": [
+        "Out-of-band or console access to the branch devices",
+        "Carrier contact details for the WAN circuit"
+      ],
+      "procedures": [
+        {
+          "order": 1,
+          "action": "Verify the WAN interface and peer reachability on the branch router",
+          "tool": {
+            "tool": "get_interface_stats",
+            "purpose": "WAN interface"
+          },
+          "commands": [
+            {
+              "text": "show interfaces {interface}",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Interface state, line protocol and error counters",
+              "illustrative": true
+            },
+            {
+              "text": "ping {peer_ip} source {interface} repeat 100",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "Loss and latency to the directly connected peer",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Interface up with no loss"
+        },
+        {
+          "order": 2,
+          "action": "Verify the BGP session to the core",
+          "tool": {
+            "tool": "analyze_routing_adjacency",
+            "purpose": "Adjacency"
+          },
+          "commands": [
+            {
+              "text": "show ip bgp summary",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "BGP session state and prefixes received",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Session established"
+        },
+        {
+          "order": 3,
+          "action": "Verify 802.1X sessions on user ports",
+          "tool": null,
+          "commands": [
+            {
+              "text": "show authentication sessions interface {interface} details",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "switch"
+              ],
+              "purpose": "802.1X session state for a port",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Ports authorized"
+        }
+      ],
+      "verification": [
+        "Users can reach the ERP service",
+        "Branch router routing table contains the data centre prefix"
+      ],
+      "escalation": [
+        {
+          "condition": "WAN circuit down",
+          "team": "WAN Operations / carrier liaison",
+          "priority": "p1"
+        },
+        {
+          "condition": "802.1X failing on several ports",
+          "team": "Network Access Control team",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "PB-WAN-FAILURE",
+        "PB-VLAN-AUTHENTICATION-FAILURE"
+      ]
+    },
+    {
+      "record_id": "RB-BLR-BRANCH",
+      "title": "Bengaluru branch WAN edge and access runbook",
+      "version": "1.0.0",
+      "fault_domains": [
+        "wan_isp",
+        "routing",
+        "vlan_authentication"
+      ],
+      "applicability": {
+        "site_ids": [
+          "BLR"
+        ],
+        "device_types": [
+          "router",
+          "switch"
+        ],
+        "services": []
+      },
+      "tags": [
+        "branch",
+        "blr",
+        "ospf"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-RUNBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "runbook",
+      "context": "The Bengaluru branch connects through BLR-RTR-01 over a single OSPF WAN circuit; users attach to BLR-SW-01 with 802.1X on the user VLAN.",
+      "preconditions": [
+        "Out-of-band or console access to the branch devices",
+        "Carrier contact details for the WAN circuit"
+      ],
+      "procedures": [
+        {
+          "order": 1,
+          "action": "Verify the WAN interface and peer reachability on the branch router",
+          "tool": {
+            "tool": "get_interface_stats",
+            "purpose": "WAN interface"
+          },
+          "commands": [
+            {
+              "text": "show interfaces {interface}",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Interface state, line protocol and error counters",
+              "illustrative": true
+            },
+            {
+              "text": "ping {peer_ip} source {interface} repeat 100",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router"
+              ],
+              "purpose": "Loss and latency to the directly connected peer",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Interface up with no loss"
+        },
+        {
+          "order": 2,
+          "action": "Verify the OSPF session to the core",
+          "tool": {
+            "tool": "analyze_routing_adjacency",
+            "purpose": "Adjacency"
+          },
+          "commands": [
+            {
+              "text": "show ip ospf neighbor",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "OSPF neighbor list and adjacency state",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Session established"
+        },
+        {
+          "order": 3,
+          "action": "Verify 802.1X sessions on user ports",
+          "tool": null,
+          "commands": [
+            {
+              "text": "show authentication sessions interface {interface} details",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "switch"
+              ],
+              "purpose": "802.1X session state for a port",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Ports authorized"
+        }
+      ],
+      "verification": [
+        "Users can reach the ERP service",
+        "Branch router routing table contains the data centre prefix"
+      ],
+      "escalation": [
+        {
+          "condition": "WAN circuit down",
+          "team": "WAN Operations / carrier liaison",
+          "priority": "p1"
+        },
+        {
+          "condition": "802.1X failing on several ports",
+          "team": "Network Access Control team",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "PB-WAN-FAILURE",
+        "PB-VLAN-AUTHENTICATION-FAILURE"
+      ]
+    },
+    {
+      "record_id": "RB-CORE-NETWORK",
+      "title": "Core network runbook",
+      "version": "1.0.0",
+      "fault_domains": [
+        "shared_infrastructure",
+        "network_device_failure",
+        "routing"
+      ],
+      "applicability": {
+        "site_ids": [
+          "CORE"
+        ],
+        "device_types": [
+          "router",
+          "switch",
+          "firewall"
+        ],
+        "services": []
+      },
+      "tags": [
+        "core",
+        "shared-device",
+        "ospf"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-RUNBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "runbook",
+      "context": "The core terminates all branch WAN circuits on CORE-RTR-01 and CORE-RTR-02, aggregated by CORE-SW-01.",
+      "preconditions": [
+        "Console access to core devices",
+        "Data centre remote hands contact"
+      ],
+      "procedures": [
+        {
+          "order": 1,
+          "action": "Check availability of the core routers",
+          "tool": {
+            "tool": "check_device_availability",
+            "purpose": "Core device state"
+          },
+          "commands": [
+            {
+              "text": "show environment power",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "Power supply status, via out-of-band console",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Both routers reporting telemetry"
+        },
+        {
+          "order": 2,
+          "action": "Verify OSPF adjacencies across the core",
+          "tool": {
+            "tool": "analyze_routing_adjacency",
+            "purpose": "Core adjacencies"
+          },
+          "commands": [
+            {
+              "text": "show ip ospf neighbor",
+              "platform": "cisco_ios_xe",
+              "device_types": [
+                "router",
+                "switch"
+              ],
+              "purpose": "OSPF neighbor list and adjacency state",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "All adjacencies FULL"
+        }
+      ],
+      "verification": [
+        "All branch paths traverse a reporting core router"
+      ],
+      "escalation": [
+        {
+          "condition": "Core router unavailable",
+          "team": "Network Operations - Core and Data Centre",
+          "priority": "p1"
+        }
+      ],
+      "related_ids": [
+        "PB-SHARED-DEVICE-FAILURE"
+      ]
+    },
+    {
+      "record_id": "RB-DC1-SERVICES",
+      "title": "Data centre network services runbook",
+      "version": "1.0.0",
+      "fault_domains": [
+        "dns",
+        "dhcp",
+        "firewall",
+        "vlan_authentication"
+      ],
+      "applicability": {
+        "site_ids": [
+          "DC1"
+        ],
+        "device_types": [
+          "server",
+          "firewall"
+        ],
+        "services": [
+          "dns",
+          "dhcp",
+          "authentication",
+          "application"
+        ]
+      },
+      "tags": [
+        "data-centre",
+        "dns",
+        "dhcp",
+        "radius",
+        "firewall"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-RUNBOOKS"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "runbook",
+      "context": "DNS, DHCP, RADIUS and the ERP application run in DC1 behind DC1-FW-01.",
+      "preconditions": [
+        "Read access to server logs",
+        "Read access to the firewall policy"
+      ],
+      "procedures": [
+        {
+          "order": 1,
+          "action": "Check DNS zone status and server logs",
+          "tool": null,
+          "commands": [
+            {
+              "text": "rndc zonestatus {zone}",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "Zone load status on the DNS server",
+              "illustrative": true
+            },
+            {
+              "text": "journalctl -u named --since \"1 hour ago\"",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "DNS server log messages",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Zones loaded"
+        },
+        {
+          "order": 2,
+          "action": "Check DHCP service status",
+          "tool": null,
+          "commands": [
+            {
+              "text": "keactrl status",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "DHCP service process state",
+              "illustrative": true
+            },
+            {
+              "text": "journalctl -u kea-dhcp4 --since \"1 hour ago\"",
+              "platform": "linux",
+              "device_types": [
+                "server"
+              ],
+              "purpose": "DHCP allocation failures and declines",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "Service active with free leases"
+        },
+        {
+          "order": 3,
+          "action": "Review firewall denies for branch subnets",
+          "tool": {
+            "tool": "get_firewall_logs",
+            "purpose": "Deny events"
+          },
+          "commands": [
+            {
+              "text": "show log traffic action equal deny",
+              "platform": "pan_os",
+              "device_types": [
+                "firewall"
+              ],
+              "purpose": "Recently denied traffic and matching rules",
+              "illustrative": true
+            }
+          ],
+          "expected_observation": "No unexpected denies"
+        }
+      ],
+      "verification": [
+        "Internal names resolve from each branch",
+        "New clients obtain addresses"
+      ],
+      "escalation": [
+        {
+          "condition": "Core network service unavailable",
+          "team": "Infrastructure Services - DHCP/DNS",
+          "priority": "p2"
+        },
+        {
+          "condition": "Unexpected deny rule affecting an application",
+          "team": "Network Security Operations",
+          "priority": "p2"
+        }
+      ],
+      "related_ids": [
+        "PB-DNS-RESOLUTION-FAILURE",
+        "PB-DHCP-ALLOCATION-FAILURE",
+        "PB-FIREWALL-BLOCKING"
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "record_id": "KD-EVIDENCE-PRINCIPLES",
+      "title": "Evidence principles for network diagnosis",
+      "version": "1.0.0",
+      "fault_domains": [],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "evidence",
+        "diagnosis",
+        "triage"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "document",
+      "document_type": "guide",
+      "category": "general",
+      "content": "Diagnostic tool evidence is authoritative; playbooks are guidance only. Missing telemetry is not proof of failure. Confirm a fault with at least two independent observations before escalating, record contradicting evidence, and consider shared upstream devices when several sites fail together. All recommended commands are read-only.",
+      "metadata": {
+        "audience": "l1_engineer"
+      }
+    },
+    {
+      "record_id": "KD-READ-ONLY-COMMANDS",
+      "title": "Illustrative read-only command reference",
+      "version": "1.0.0",
+      "fault_domains": [],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "commands",
+        "read-only",
+        "reference"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "document",
+      "document_type": "reference",
+      "category": "general",
+      "content": "Commands in this knowledge base are illustrative read-only examples for Cisco IOS XE style routers and switches (show, ping, traceroute), PAN-OS style firewalls (show) and Linux servers (journalctl, dig, rndc status, keactrl status). Placeholders in braces must be filled in by the engineer. Configuration commands are never recommended.",
+      "metadata": {
+        "validation": "read_only_allowlist"
+      }
+    },
+    {
+      "record_id": "KD-ESCALATION-MATRIX",
+      "title": "Escalation matrix by fault domain",
+      "version": "1.0.0",
+      "fault_domains": [],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "escalation",
+        "teams"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "document",
+      "document_type": "checklist",
+      "category": "general",
+      "content": "WAN and carrier faults: WAN Operations / carrier liaison. Routing faults: Network Engineering - Routing. Firewall policy: Network Security Operations. 802.1X and RADIUS: Network Access Control team. DHCP and DNS: Infrastructure Services - DHCP/DNS. Shared core or data centre devices: Network Operations - Core and Data Centre. Unknown domain: Network Operations - L2 triage. Escalations are recommendations until a person sends them.",
+      "metadata": {}
+    }
+  ],
+  "procedures": [
+    {
+      "record_id": "DP-INTERFACE-HEALTH",
+      "title": "Interface health check",
+      "version": "1.0.0",
+      "fault_domains": [
+        "interface_link",
+        "wan_isp"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "interface",
+        "errors",
+        "loss"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "procedure",
+      "symptoms": [
+        "Link flaps or down",
+        "Errors or drops on an interface",
+        "Packet loss on a link"
+      ],
+      "tools": [
+        {
+          "tool": "get_interface_stats",
+          "purpose": "Status and counters"
+        },
+        {
+          "tool": "analyze_interface_errors",
+          "purpose": "Error pattern"
+        },
+        {
+          "tool": "analyze_packet_loss",
+          "purpose": "Loss pattern"
+        }
+      ],
+      "commands": [
+        {
+          "text": "show interfaces {interface}",
+          "platform": "cisco_ios_xe",
+          "device_types": [
+            "router",
+            "switch"
+          ],
+          "purpose": "Interface state, line protocol and error counters",
+          "illustrative": true
+        },
+        {
+          "text": "ping {peer_ip} source {interface} repeat 100",
+          "platform": "cisco_ios_xe",
+          "device_types": [
+            "router"
+          ],
+          "purpose": "Loss and latency to the directly connected peer",
+          "illustrative": true
+        }
+      ],
+      "expected_outputs": [
+        "Interface up with error and drop counters below threshold",
+        "Loss below 1 percent"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-IF-STATE",
+          "description": "Interface status and counters",
+          "codes": [
+            "INTERFACE_DOWN",
+            "HIGH_ERROR_COUNT"
+          ],
+          "tool": {
+            "tool": "get_interface_stats",
+            "purpose": "Counters"
+          }
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Errors rise with loss",
+          "conclusion": "Physical degradation suspected",
+          "next_record_id": "PB-PACKET-LOSS"
+        }
+      ],
+      "next_ids": [
+        "PB-PACKET-LOSS"
+      ],
+      "escalation_conditions": [
+        "Interface down or sustained errors on a WAN link"
+      ]
+    },
+    {
+      "record_id": "DP-ROUTING-VERIFICATION",
+      "title": "Routing verification",
+      "version": "1.0.0",
+      "fault_domains": [
+        "routing"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "routing",
+        "ospf",
+        "bgp"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "procedure",
+      "symptoms": [
+        "Routes missing for a site",
+        "Adjacency not established"
+      ],
+      "tools": [
+        {
+          "tool": "get_routing_state",
+          "purpose": "Routes and neighbors"
+        },
+        {
+          "tool": "analyze_routing_adjacency",
+          "purpose": "Adjacency health"
+        }
+      ],
+      "commands": [
+        {
+          "text": "show ip route {prefix}",
+          "platform": "cisco_ios_xe",
+          "device_types": [
+            "router",
+            "switch"
+          ],
+          "purpose": "Routing table entry and next hop for a prefix",
+          "illustrative": true
+        },
+        {
+          "text": "show ip ospf neighbor",
+          "platform": "cisco_ios_xe",
+          "device_types": [
+            "router",
+            "switch"
+          ],
+          "purpose": "OSPF neighbor list and adjacency state",
+          "illustrative": true
+        },
+        {
+          "text": "show ip bgp summary",
+          "platform": "cisco_ios_xe",
+          "device_types": [
+            "router"
+          ],
+          "purpose": "BGP session state and prefixes received",
+          "illustrative": true
+        }
+      ],
+      "expected_outputs": [
+        "Destination prefix present with the expected next hop",
+        "Neighbors FULL or Established"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-RT-STATE",
+          "description": "Neighbor states and route changes",
+          "codes": [
+            "NEIGHBOR_NOT_ESTABLISHED",
+            "ROUTES_WITHDRAWN"
+          ],
+          "tool": {
+            "tool": "get_routing_state",
+            "purpose": "Routing state"
+          }
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Adjacency stalled with links up",
+          "conclusion": "Parameter mismatch suspected",
+          "next_record_id": "PB-OSPF-ADJACENCY-FAILURE"
+        }
+      ],
+      "next_ids": [
+        "PB-OSPF-ADJACENCY-FAILURE"
+      ],
+      "escalation_conditions": [
+        "Site routes withdrawn"
+      ]
+    },
+    {
+      "record_id": "DP-DNS-DHCP-SERVICES",
+      "title": "DNS and DHCP service checks",
+      "version": "1.0.0",
+      "fault_domains": [
+        "dns",
+        "dhcp"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "dns",
+        "dhcp",
+        "services"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "procedure",
+      "symptoms": [
+        "Names do not resolve",
+        "Clients cannot obtain an address"
+      ],
+      "tools": [
+        {
+          "tool": "get_dhcp_dns_status",
+          "purpose": "Service status per site"
+        }
+      ],
+      "commands": [
+        {
+          "text": "dig @{dns_server} {domain} A",
+          "platform": "linux",
+          "device_types": [
+            "server"
+          ],
+          "purpose": "Reproduce a name resolution against one server",
+          "illustrative": true
+        },
+        {
+          "text": "rndc zonestatus {zone}",
+          "platform": "linux",
+          "device_types": [
+            "server"
+          ],
+          "purpose": "Zone load status on the DNS server",
+          "illustrative": true
+        },
+        {
+          "text": "keactrl status",
+          "platform": "linux",
+          "device_types": [
+            "server"
+          ],
+          "purpose": "DHCP service process state",
+          "illustrative": true
+        }
+      ],
+      "expected_outputs": [
+        "DNS queries return answers from all servers",
+        "DHCP pools below 90 percent utilization"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-SVC-STATE",
+          "description": "DNS results and DHCP pool state",
+          "codes": [
+            "DNS_SERVFAIL",
+            "DHCP_POOL_EXHAUSTED",
+            "DNS_TIMEOUTS"
+          ],
+          "tool": {
+            "tool": "get_dhcp_dns_status",
+            "purpose": "Service state"
+          }
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "SERVFAIL from one server",
+          "conclusion": "Server fault suspected",
+          "next_record_id": "PB-DNS-RESOLUTION-FAILURE"
+        },
+        {
+          "condition": "Pool exhausted",
+          "conclusion": "Capacity fault suspected",
+          "next_record_id": "PB-DHCP-ALLOCATION-FAILURE"
+        }
+      ],
+      "next_ids": [
+        "PB-DNS-RESOLUTION-FAILURE",
+        "PB-DHCP-ALLOCATION-FAILURE"
+      ],
+      "escalation_conditions": [
+        "Internal zone or user pool unavailable"
+      ]
+    },
+    {
+      "record_id": "DP-FIREWALL-POLICY",
+      "title": "Firewall policy verification",
+      "version": "1.0.0",
+      "fault_domains": [
+        "firewall"
+      ],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "firewall",
+        "policy"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "procedure",
+      "symptoms": [
+        "Single application blocked",
+        "Traffic denied after a change"
+      ],
+      "tools": [
+        {
+          "tool": "get_firewall_logs",
+          "purpose": "Allow and deny events"
+        },
+        {
+          "tool": "check_network_reachability",
+          "purpose": "Layer-3 path"
+        }
+      ],
+      "commands": [
+        {
+          "text": "show log traffic action equal deny",
+          "platform": "pan_os",
+          "device_types": [
+            "firewall"
+          ],
+          "purpose": "Recently denied traffic and matching rules",
+          "illustrative": true
+        },
+        {
+          "text": "show running security-policy",
+          "platform": "pan_os",
+          "device_types": [
+            "firewall"
+          ],
+          "purpose": "Active security rule order",
+          "illustrative": true
+        }
+      ],
+      "expected_outputs": [
+        "Flows allowed by the intended rule",
+        "No recent rule changes affecting the flow"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-FWP-DENY",
+          "description": "Denied flows with rule identifiers",
+          "codes": [
+            "TRAFFIC_DENIED"
+          ],
+          "tool": {
+            "tool": "get_firewall_logs",
+            "purpose": "Deny events"
+          }
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "Recently modified deny rule matches",
+          "conclusion": "Policy fault suspected",
+          "next_record_id": "PB-FIREWALL-BLOCKING"
+        }
+      ],
+      "next_ids": [
+        "PB-FIREWALL-BLOCKING"
+      ],
+      "escalation_conditions": [
+        "Business traffic denied"
+      ]
+    },
+    {
+      "record_id": "DP-TOPOLOGY-DEPENDENCIES",
+      "title": "Topology dependency analysis",
+      "version": "1.0.0",
+      "fault_domains": [],
+      "applicability": {
+        "site_ids": [],
+        "device_types": [],
+        "services": []
+      },
+      "tags": [
+        "topology",
+        "dependencies"
+      ],
+      "source_ids": [
+        "SRC-SYNTHETIC-REFERENCE"
+      ],
+      "created_at": "2026-02-01T00:00:00Z",
+      "updated_at": "2026-02-15T00:00:00Z",
+      "active": true,
+      "record_type": "procedure",
+      "symptoms": [
+        "Several sites affected",
+        "Unknown failure point"
+      ],
+      "tools": [
+        {
+          "tool": "get_topology",
+          "purpose": "Site topology"
+        },
+        {
+          "tool": "analyze_network_dependencies",
+          "purpose": "Shared devices"
+        },
+        {
+          "tool": "check_network_reachability",
+          "purpose": "Path evaluation"
+        }
+      ],
+      "commands": [],
+      "expected_outputs": [
+        "Shared devices on affected paths identified"
+      ],
+      "required_evidence": [
+        {
+          "requirement_id": "EV-DEP-PATHS",
+          "description": "Path outcomes for each affected site",
+          "codes": [
+            "PATH_UNREACHABLE",
+            "PATH_REACHABLE"
+          ],
+          "tool": {
+            "tool": "check_network_reachability",
+            "purpose": "Path outcomes"
+          }
+        }
+      ],
+      "decisions": [
+        {
+          "condition": "All affected paths share one device",
+          "conclusion": "Investigate the shared device",
+          "next_record_id": "PB-SHARED-DEVICE-FAILURE"
+        }
+      ],
+      "next_ids": [
+        "PB-SHARED-DEVICE-FAILURE"
+      ],
+      "escalation_conditions": [
+        "Shared device unavailable"
+      ]
+    }
+  ]
+}

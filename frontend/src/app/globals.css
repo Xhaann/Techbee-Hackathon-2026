@@ -1,0 +1,267 @@
+@layer ui-sdk;
+
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/*
+  Tokens are sampled from the reference mock (Network diagnosis · Incident workspace).
+  Dark is the reference; light is derived with the same roles.
+*/
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --chrome: #202329;
+  --sidebar: #1c1f25;
+  --page: #17191d;
+  --panel: #1d2026;
+  --surface: #1b1e24;
+  --raised: #22262e;
+  --sunken: #16181d;
+  --hover: #262a32;
+  --selected: #2b3442;
+
+  --line: #343943;
+  --line-soft: #2b2f38;
+  --line-strong: #454e5e;
+
+  --ink: #f0f2f7;
+  --ink-2: #c6cdd9;
+  --ink-soft: #b9bcc7;
+  --ink-3: #a0aabd;
+  --ink-4: #858b98;
+
+  --accent: #9ab9fe;
+  --accent-strong: #335bc8;
+  --accent-strong-hover: #3b66d9;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(154 185 254 / 0.12);
+  --accent-ring: rgb(154 185 254 / 0.45);
+  /* Chart marks: validated against the dark surface (dataviz lightness band). */
+  --chart: #6f8fe8;
+
+  --amber: #f4be7f;
+  --amber-line: #9b7147;
+  --amber-soft: rgb(244 190 127 / 0.13);
+  --green: #8ac5aa;
+  --green-line: #4d6e60;
+  --green-soft: rgb(138 197 170 / 0.12);
+  --red: #f2a3a3;
+  --red-line: #9c5454;
+  --red-soft: rgb(242 163 163 / 0.12);
+
+  --ring-card: 0 0 0 1px var(--line-soft);
+  --shadow-card: 0 0 0 1px var(--line-soft), 0 1px 2px rgb(0 0 0 / 0.25);
+  --shadow-raised: 0 0 0 1px var(--line-strong), 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.6);
+  --shadow-pop: 0 0 0 1px var(--line), 0 16px 40px -12px rgb(0 0 0 / 0.65), 0 2px 6px rgb(0 0 0 / 0.3);
+  --scrim: rgb(8 9 12 / 0.6);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --chrome: #f5f6f8;
+  --sidebar: #f2f3f6;
+  --page: #ffffff;
+  --panel: #f7f8fa;
+  --surface: #ffffff;
+  --raised: #f7f8fb;
+  --sunken: #ffffff;
+  --hover: #eceef2;
+  --selected: #e4eaf6;
+
+  --line: #e1e4ea;
+  --line-soft: #e6e9ee;
+  --line-strong: #cbd2dd;
+
+  --ink: #111318;
+  --ink-2: #363d4a;
+  --ink-soft: #454c59;
+  --ink-3: #636b7c;
+  --ink-4: #868d9b;
+
+  --accent: #2f56c4;
+  --accent-strong: #2f56c4;
+  --accent-strong-hover: #2849a9;
+  --accent-fg: #ffffff;
+  --accent-soft: rgb(47 86 196 / 0.08);
+  --accent-ring: rgb(47 86 196 / 0.35);
+  --chart: #2f56c4;
+
+  --amber: #a35b0c;
+  --amber-line: #dba465;
+  --amber-soft: rgb(214 140 50 / 0.12);
+  --green: #24714f;
+  --green-line: #8fc4aa;
+  --green-soft: rgb(36 113 79 / 0.09);
+  --red: #b3363a;
+  --red-line: #e3a1a1;
+  --red-soft: rgb(179 54 58 / 0.08);
+
+  --ring-card: 0 0 0 1px var(--line);
+  --shadow-card: 0 0 0 1px var(--line), 0 1px 2px rgb(15 30 60 / 0.04);
+  --shadow-raised: 0 0 0 1px var(--line-strong), 0 1px 2px rgb(15 30 60 / 0.05), 0 12px 32px -16px rgb(15 30 60 / 0.18);
+  --shadow-pop: 0 0 0 1px var(--line), 0 16px 40px -12px rgb(15 30 60 / 0.22), 0 2px 6px rgb(15 30 60 / 0.06);
+  --scrim: rgb(20 24 32 / 0.28);
+}
+
+@theme inline {
+  --color-chrome: var(--chrome);
+  --color-sidebar: var(--sidebar);
+  --color-page: var(--page);
+  --color-panel: var(--panel);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-sunken: var(--sunken);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-strong-hover: var(--accent-strong-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-chart: var(--chart);
+  --color-amber: var(--amber);
+  --color-amber-line: var(--amber-line);
+  --color-amber-soft: var(--amber-soft);
+  --color-green: var(--green);
+  --color-green-line: var(--green-line);
+  --color-green-soft: var(--green-soft);
+  --color-red: var(--red);
+  --color-red-line: var(--red-line);
+  --color-red-soft: var(--red-soft);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-pop: var(--shadow-pop);
+
+  /* Critically damped springs baked into linear(): 1 - (1 + w·t)·e^(-w·t), w = 8.5 (spring) and 10 (snappy). */
+  --ease-spring: linear(0.0000, 0.0139, 0.0497, 0.0998, 0.1587, 0.2222, 0.2872, 0.3516, 0.4139, 0.4730, 0.5284, 0.5797, 0.6268, 0.6696, 0.7084, 0.7433, 0.7745, 0.8024, 0.8272, 0.8491, 0.8685, 0.8855, 0.9005, 0.9136, 0.9251, 0.9352, 0.9439, 0.9515, 0.9581, 0.9639, 0.9689, 0.9732, 0.9769, 0.9802, 0.9830, 0.9854, 0.9874, 0.9892, 0.9908, 0.9921, 0.9932, 0.9942, 0.9950, 0.9958, 0.9964, 0.9969, 0.9973, 0.9977, 1);
+  --ease-snappy: linear(0.0000, 0.0189, 0.0661, 0.1302, 0.2032, 0.2796, 0.3554, 0.4281, 0.4963, 0.5591, 0.6161, 0.6672, 0.7127, 0.7528, 0.7881, 0.8188, 0.8454, 0.8685, 0.8883, 0.9053, 0.9199, 0.9323, 0.9429, 0.9519, 0.9596, 0.9660, 0.9715, 0.9761, 0.9800, 0.9833, 0.9860, 0.9883, 0.9902, 0.9919, 0.9932, 0.9944, 0.9953, 0.9961, 0.9967, 0.9973, 0.9978, 0.9981, 0.9985, 0.9987, 0.9989, 0.9991, 0.9993, 0.9994, 1);
+}
+
+@layer base {
+  html {
+    background: var(--page);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss03";
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent-ring);
+    outline-offset: 2px;
+  }
+
+  button,
+  [role="button"] {
+    cursor: default;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+@layer components {
+  /* Cards: hairline ring in the shadow stack, no border. */
+  .card {
+    background: var(--surface);
+    border-radius: 10px;
+    box-shadow: var(--shadow-card);
+  }
+
+  .card-raised {
+    background: var(--raised);
+    border-radius: 10px;
+    box-shadow: var(--shadow-raised);
+  }
+
+  .hairline-b {
+    box-shadow: inset 0 -1px 0 var(--line);
+  }
+
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
+  /* Popups (menus, selects, popovers) share one surface. */
+  .popup {
+    background: var(--raised);
+    color: var(--ink);
+    border: 0;
+    border-radius: 10px;
+    box-shadow: var(--shadow-pop);
+    padding: 4px;
+    transform-origin: var(--transform-origin);
+    transition: opacity 140ms ease, scale 180ms var(--ease-spring);
+  }
+
+  .popup[data-starting-style],
+  .popup[data-ending-style] {
+    opacity: 0;
+    scale: 0.97;
+  }
+
+  .popup-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    outline: none;
+  }
+
+  .popup-item[data-highlighted] {
+    background: var(--hover);
+    color: var(--ink);
+  }
+
+  .popup-item[data-disabled] {
+    opacity: 0.45;
+  }
+
+  /* Hide the pending/idle label pair on ui-sdk buttons. */
+  [data-slot="button"]:not([data-pending]) [data-show="pending"],
+  [data-slot="button"][data-pending] [data-show="idle"] {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}

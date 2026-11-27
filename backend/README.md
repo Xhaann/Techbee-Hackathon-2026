@@ -87,7 +87,8 @@ evidence explanations never call a diagnostic tool. Full diagnoses go through `D
 Framework, rule-based fallback); targeted checks go through `ToolExecutor`. Both keep the 10-call budget, sequential
 execution, the tool allowlist, argument/result limits and duplicate prevention. Replies are written by a tool-less
 Agent Framework agent from the turn's facts and checked before use (evidence ids, device names, no claims of checks
-that didn't run, no human actions, no remediation); otherwise the deterministic reply is used.
+that didn't run, no confirmations or attack claims the facts don't support, no dropped security warnings, no human
+actions, no remediation); otherwise the deterministic reply is used.
 
 | Operation | Purpose |
 | --- | --- |
@@ -106,7 +107,7 @@ calls, budget, mode, model, composer) and evidence references. SSE events: `turn
 `investigation.progress`, `evidence.correlated`, `investigation.completed` / `failed` / `cancelled`,
 `human_confirmation.required`, `assistant.typing`, `assistant.delta`, `assistant.message`, `turn.cancelling`, and the
 terminal `turn.completed` (or `turn.failed`). Conversations are private to the principal that created them (other
-users get 404) and are held in memory, so they don't survive a backend restart.
+users get 404) and persist to `CONVERSATION_STORE_DIR` (see below).
 
 ## Observability API
 
@@ -158,7 +159,8 @@ five compact tools over these analytics: `get_network_health`, `get_config_drift
   - It drafts customer emails and incident updates from verified facts only. They are never sent, with
     [placeholders] for unknowns and no invented causes or ETAs.
   - It gives numbered read-only troubleshooting steps with expected outputs, interprets pasted command output and
-    handles failed steps.
+    handles failed steps. Steps rest on the diagnosis, the evidence and the user's report; when nothing justifies a
+    step, it says more evidence is needed instead of falling back to a generic checklist.
   - It offers checks and runs them only after approval.
   - Every message carries `generated_by`: who wrote the reply and whether the result came from the AI agent,
     rules, or a rule-based fallback.

@@ -74,17 +74,18 @@ class AgentResources:
             yield client
 
 
-def run_deadline(config: ProviderConfig) -> float:
-    return min(MAX_RUN_SECONDS, config.timeout_seconds * (MAX_MODEL_TURNS + 1))
+def run_deadline(config: ProviderConfig, limit: float = MAX_RUN_SECONDS) -> float:
+    return min(MAX_RUN_SECONDS, limit, config.timeout_seconds * (MAX_MODEL_TURNS + 1))
 
 
-def build_agent(model: AgentModel, budget: ToolBudget, http_client: Any = None) -> Agent:
+def build_agent(model: AgentModel, budget: ToolBudget, http_client: Any = None, deadline: float | None = None) -> Agent:
     config = model.config
+    deadline = deadline or run_deadline(config)
     async_client = openai.AsyncOpenAI(api_key=config.api_key.get_secret_value(), base_url=config.endpoint,
                                       timeout=config.timeout_seconds, max_retries=0, http_client=http_client)
     client = OpenAIChatCompletionClient(model=config.model, async_client=async_client)
     client.function_invocation_configuration.update({
-        "max_function_calls": budget.limit, "max_iterations": MAX_MODEL_TURNS, "max_duration_seconds": run_deadline(config),
+        "max_function_calls": budget.limit, "max_iterations": MAX_MODEL_TURNS, "max_duration_seconds": deadline,
         "allow_concurrent_invocation": False, "terminate_on_unknown_calls": False, "include_detailed_errors": False,
     })
     options: dict[str, Any] = {"max_tokens": config.max_output_tokens, "allow_multiple_tool_calls": False}
@@ -98,13 +99,13 @@ COMPOSER_NAME = "network-ops-conversation"
 MAX_COMPOSER_TOKENS = 900
 
 
-def build_composer(model: AgentModel, instructions: str, http_client: Any = None) -> Agent:
+def build_composer(model: AgentModel, instructions: str, http_client: Any = None, max_tokens: int = MAX_COMPOSER_TOKENS) -> Agent:
     """A tool-less agent that only writes conversational replies; it cannot call diagnostic tools."""
     config = model.config
     async_client = openai.AsyncOpenAI(api_key=config.api_key.get_secret_value(), base_url=config.endpoint,
                                       timeout=config.timeout_seconds, max_retries=0, http_client=http_client)
     client = OpenAIChatCompletionClient(model=config.model, async_client=async_client)
-    options: dict[str, Any] = {"max_tokens": min(MAX_COMPOSER_TOKENS, config.max_output_tokens)}
+    options: dict[str, Any] = {"max_tokens": min(max_tokens, MAX_COMPOSER_TOKENS, config.max_output_tokens)}
     if config.temperature is not None:
         options["temperature"] = config.temperature
     return Agent(client=client, instructions=instructions, name=COMPOSER_NAME, default_options=options)

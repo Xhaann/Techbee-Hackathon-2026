@@ -47,7 +47,7 @@ from app.incidents.models import (
 from app.incidents.repository import IncidentRepository
 from app.incidents.similarity import DEFAULT_WINDOW, SimilarIncident, compare, duplicate_reason
 from app.network.models import IncidentPriority
-from app.network.repository import list_scenario_ids, load_topology
+from app.network.repository import load_topology, scenario_exists
 from app.security.provenance import provenance_issues
 from app.security.secrets import contains_secret, redact
 
@@ -72,6 +72,7 @@ ESCALATION_TRANSITIONS = {
 }
 MAX_LINKED_EVIDENCE = 50
 SIMILARITY_SCAN_LIMIT = 500
+Visibility = Callable[[IncidentSummary], bool] | None
 
 
 def utc_now() -> datetime:
@@ -178,19 +179,19 @@ class IncidentService:
     def get_incident(self, incident_id: str) -> Incident:
         return self.repository.get(incident_id)
 
-    def list_incidents(self, criteria: IncidentFilter | None = None) -> list[IncidentSummary]:
-        return self.repository.query(criteria or IncidentFilter())
+    def list_incidents(self, criteria: IncidentFilter | None = None, visible: Visibility = None) -> list[IncidentSummary]:
+        return self.repository.query(criteria or IncidentFilter(), visible)
 
     def timeline(self, incident_id: str) -> list[TimelineEvent]:
         return self.get_incident(incident_id).timeline
 
-    def create_incident(self, request: IncidentCreateRequest, actor: Actor) -> CreationOutcome:
-        require_actor(actor, ANYONE, "create incidents")
+    def new_incident(self, request: IncidentCreateRequest, actor: Actor, incident_id: str, moment: datetime,
+                     description: str, demo: bool = False) -> Incident:
+        """Validates a report and builds its version-1 record; the caller stores it."""
         self.index.require_sites(request.site_ids)
         self.index.require_devices(request.device_ids)
-        if request.dataset_scenario_id and request.dataset_scenario_id not in list_scenario_ids():
+        if request.dataset_scenario_id and not scenario_exists(request.dataset_scenario_id):
             raise IncidentValidationError(f"Unknown dataset scenario '{request.dataset_scenario_id}'")
-        moment = self.now()
         if request.reported_at and request.reported_at > moment:
             raise IncidentValidationError("reported_at cannot be in the future")
         if request.severity:
@@ -208,15 +209,14 @@ class IncidentService:
         reported += [asset(AssetType.DEVICE, device, ImpactBasis.REPORTED, source, moment) for device in request.device_ids]
         reported += [asset(AssetType.SERVICE, service.value, ImpactBasis.REPORTED, source, moment) for service in request.services]
         assets, _ = merge_assets([], reported)
-        incident_id = self.repository.next_id(moment)
         created = moment if request.reported_at is None else min(moment, request.reported_at)
-        description = f"Incident reported via {request.source.value}"
         if any(contains_secret(text) for text in (request.title, request.description, *request.symptoms)):
             request = request.model_copy(update={"title": redact(request.title), "description": redact(request.description),
                                                  "symptoms": [redact(item) for item in request.symptoms]})
-        incident = Incident(
+        return Incident(
             incident_id=incident_id, version=1, title=request.title, description=request.description,
-            source=request.source, dataset_scenario_id=request.dataset_scenario_id, site_ids=list(dict.fromkeys(request.site_ids)),
+            source=request.source, dataset_scenario_id=request.dataset_scenario_id, demo=demo,
+            site_ids=list(dict.fromkeys(request.site_ids)),
             symptoms=request.symptoms, severity=severity, severity_source=severity_source, priority=priority,
             priority_source=priority_source, status=LifecycleStatus.NEW, affected_assets=assets,
             security_flags=injection_flags("incident report", f"{request.title}\n{request.description}"),
@@ -225,7 +225,13 @@ class IncidentService:
                                     event_type=EventType.CREATED, timestamp=created, actor=actor, description=description,
                                     to_status=LifecycleStatus.NEW)],
         )
-        matches = self.similar_to(incident, active_only=True)
+
+    def create_incident(self, request: IncidentCreateRequest, actor: Actor, visible: Visibility = None) -> CreationOutcome:
+        require_actor(actor, ANYONE, "create incidents")
+        moment = self.now()
+        description = f"Incident reported via {request.source.value}"
+        incident = self.new_incident(request, actor, self.repository.next_id(moment), moment, description)
+        matches = self.similar_to(incident, active_only=True, visible=visible)
         reasons = {match.incident_id: duplicate_reason(incident, self.get_incident(match.incident_id), match) for match in matches}
         duplicates = [match for match in matches if reasons[match.incident_id]]
         possible = [match for match in matches if match.strength.value != "weak" and match not in duplicates]
@@ -245,6 +251,16 @@ class IncidentService:
             incident = incident.model_copy(update={"timeline": [first]})
         self.repository.add(incident)
         return CreationOutcome(incident=incident, created=True, possible_duplicates=duplicates + possible)
+
+    def add_demo_incident(self, request: IncidentCreateRequest, actor: Actor, incident_id: str, note: str) -> Incident:
+        """Stores a demo record under a fixed identifier. Only a system actor seeds demo data, an existing record is never
+        replaced (the repository refuses the identifier), and no duplicate linking runs: demo and reported incidents stay apart."""
+        require_actor(actor, (ActorKind.SYSTEM,), "seed demo incidents")
+        if not request.dataset_scenario_id:
+            raise IncidentValidationError("A demo incident must name its synthetic dataset scenario")
+        incident = self.new_incident(request, actor, incident_id, self.now(), note, demo=True)
+        self.repository.add(incident)
+        return incident
 
     def update_details(self, incident_id: str, actor: Actor, title: str | None = None, description: str | None = None,
                        assigned_team: str | None = None, assigned_owner: str | None = None) -> Incident:
@@ -642,9 +658,10 @@ class IncidentService:
         return self.commit(incident, updates, events)
 
     def similar_to(self, incident: Incident, active_only: bool = False, window: timedelta = DEFAULT_WINDOW,
-                   limit: int = 10) -> list[SimilarIncident]:
-        summaries = self.repository.query(IncidentFilter(limit=SIMILARITY_SCAN_LIMIT))
-        candidates = [s for s in summaries if s.incident_id != incident.incident_id
+                   limit: int = 10, visible: Visibility = None) -> list[SimilarIncident]:
+        summaries = self.repository.query(IncidentFilter(limit=SIMILARITY_SCAN_LIMIT), visible)
+        # Demo records are compared only with demo records, so a real report is never linked to or merged into synthetic data.
+        candidates = [s for s in summaries if s.incident_id != incident.incident_id and s.demo == incident.demo
                       and (not active_only or s.status in ACTIVE_STATUSES)
                       and (not active_only or set(s.site_ids) & set(incident.site_ids))]
         matches = [compare(incident, self.get_incident(s.incident_id), window) for s in candidates]
@@ -652,8 +669,9 @@ class IncidentService:
         matches.sort(key=lambda match: (-match.points, match.incident_id))
         return matches[:limit]
 
-    def find_similar(self, incident_id: str, limit: int = 5, window: timedelta = DEFAULT_WINDOW) -> list[SimilarIncident]:
-        return self.similar_to(self.get_incident(incident_id), window=window, limit=limit)
+    def find_similar(self, incident_id: str, limit: int = 5, window: timedelta = DEFAULT_WINDOW,
+                     visible: Visibility = None) -> list[SimilarIncident]:
+        return self.similar_to(self.get_incident(incident_id), window=window, limit=limit, visible=visible)
 
     def diagnosis_history(self, incident_id: str) -> list[DiagnosisComparison]:
         history, previous = [], None
@@ -683,18 +701,18 @@ class IncidentService:
         return sorted(entries, key=lambda e: (e.resolution.proposed_at, e.resolution.resolution_id))
 
     def recurring_incidents(self, window: timedelta = timedelta(days=30), minimum: int = 2,
-                            reference: datetime | None = None) -> list[RecurringGroup]:
+                            reference: datetime | None = None, visible: Visibility = None) -> list[RecurringGroup]:
         end = reference or self.now()
         summaries = self.repository.query(IncidentFilter(start=end - window, end=end + timedelta(seconds=1),
-                                                         limit=SIMILARITY_SCAN_LIMIT))
-        groups: dict[tuple[str, FaultDomain], list[IncidentSummary]] = {}
+                                                         limit=SIMILARITY_SCAN_LIMIT), visible)
+        groups: dict[tuple[str, FaultDomain, bool], list[IncidentSummary]] = {}
         for summary in summaries:
             if summary.fault_domain in (None, FaultDomain.UNKNOWN):
                 continue
-            for site in summary.site_ids:
-                groups.setdefault((site, summary.fault_domain), []).append(summary)
+            for site in summary.site_ids:  # demo records never form a recurrence with reported incidents
+                groups.setdefault((site, summary.fault_domain, summary.demo), []).append(summary)
         recurring = []
-        for (site, domain), members in sorted(groups.items(), key=lambda item: (item[0][0], item[0][1].value)):
+        for (site, domain, _), members in sorted(groups.items(), key=lambda item: (item[0][0], item[0][1].value, item[0][2])):
             if len(members) < minimum:
                 continue
             members.sort(key=lambda s: (s.created_at, s.incident_id))

@@ -20,6 +20,7 @@ from app.conversation.models import (
 from app.conversation.store import TERMINAL_EVENTS, ConversationState
 from app.incidents.models import IncidentId
 from app.network.models import Identifier
+from app.reasoning.report import ReasoningReport
 from app.security.permissions import Permission, authorize
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -170,6 +171,18 @@ def reset_context(conversation_id: ConversationPath, principal: CurrentPrincipal
     return registry.conversations.reset_context(state)
 
 
+@router.get("/{conversation_id}/investigations/{investigation_id}/reasoning", response_model=ReasoningReport)
+def investigation_reasoning(conversation_id: ConversationPath, investigation_id: InvestigationPath, principal: CurrentPrincipal,
+                            registry: ServicesDependency) -> ReasoningReport:
+    """Probabilities, contradictions, causal chain, specialist reviews, plan and self-evaluation for one investigation."""
+    state = owned(registry, principal, conversation_id)
+    found = state.investigations.get(investigation_id)
+    if found is None or found.reasoning is None:
+        from app.api.dependencies import not_found
+        raise not_found("No reasoning for that investigation")
+    return found.reasoning
+
+
 @router.get("/{conversation_id}/investigations/{investigation_id}", response_model=Investigation)
 def investigation(conversation_id: ConversationPath, investigation_id: InvestigationPath, principal: CurrentPrincipal,
                   registry: ServicesDependency) -> Investigation:
@@ -187,6 +200,7 @@ async def attach(conversation_id: ConversationPath, investigation_id: Investigat
     """Human-approved: saves a conversation diagnosis to the linked incident. Never called by the assistant itself."""
     state = owned(registry, principal, conversation_id)
     authorize(principal, Permission.RUN_DIAGNOSTICS)
-    updated = await registry.conversations.attach(state, principal, investigation_id, body.expected_version)
+    with registry.in_flight.claim(f"attach:{investigation_id}", "This investigation is already being saved"):
+        updated = await registry.conversations.attach(state, principal, investigation_id, body.expected_version)
     return AttachedIncident(incident_id=updated.incident_id, version=updated.version, status=updated.status.value,
                             active_diagnosis_id=updated.active_diagnosis_id)

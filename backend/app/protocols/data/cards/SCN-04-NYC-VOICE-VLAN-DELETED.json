@@ -1,0 +1,166 @@
+{
+  "scenario_id": "SCN-04-NYC-VOICE-VLAN-DELETED",
+  "incident_id": "INC-20260424-404",
+  "title": "Voice VLAN deleted, plus an address conflict",
+  "difficulty": [
+    "multiple-symptoms",
+    "misleading-evidence",
+    "straightforward"
+  ],
+  "capabilities": [
+    "change history",
+    "config drift",
+    "DHCP",
+    "VLAN/trunk",
+    "ARP",
+    "STP"
+  ],
+  "sites": [
+    "NYC"
+  ],
+  "unaffected_sites": [
+    "SIN",
+    "BLR"
+  ],
+  "affected_devices": [
+    "NYC-SW-01"
+  ],
+  "affected_services": [
+    "voice",
+    "dhcp"
+  ],
+  "affected_paths": [
+    "PATH-NYC-DHCP"
+  ],
+  "timeline": [
+    {
+      "minute": -5.0,
+      "evidence": "events:EVT-S04-001",
+      "what": "'no vlan 20' on NYC-SW-01"
+    },
+    {
+      "minute": -4.8,
+      "evidence": "events:EVT-S04-002",
+      "what": "Trunk allowed list trimmed to 10,99"
+    },
+    {
+      "minute": -3.0,
+      "evidence": "events:EVT-S04-004",
+      "what": "DHCP server CPU warning (decoy)"
+    },
+    {
+      "minute": 4.0,
+      "evidence": "dhcp_events:DHCP-EVT-S04-001",
+      "what": "Unrelated printer address conflict"
+    }
+  ],
+  "root_cause": "VLAN 20 deleted from NYC-SW-01 and its trunk; an unrelated printer address conflict at the same time.",
+  "symptoms": [
+    "Phones have no IP address",
+    "One desktop keeps disconnecting"
+  ],
+  "secondary_effects": [
+    "No DHCP transactions for the voice pool",
+    "Gi1/0/3 inactive"
+  ],
+  "decoys": [
+    {
+      "clue": "DHCP server high CPU",
+      "evidence": [
+        "events:EVT-S04-004"
+      ],
+      "why_misleading": "The server still answers the users pool; voice requests never reach it.",
+      "must_not_conclude": [
+        "dhcp"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": true,
+    "acceptable_domains": [
+      "switching"
+    ],
+    "note": "The change log and the stopped voice DHCP are visible; the VLAN database is only in the protocol telemetry."
+  },
+  "expected_findings": [
+    {
+      "engine": "vlan",
+      "code": "VLAN_MISSING_FROM_DATABASE",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    },
+    {
+      "engine": "vlan",
+      "code": "VLAN_PRUNED",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    },
+    {
+      "engine": "arp",
+      "code": "ARP_IP_CONFLICT",
+      "status": "confirmed_fault",
+      "role": "independent",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    }
+  ],
+  "acceptable_findings": [],
+  "forbidden_findings": [
+    "ARP_GATEWAY_SPOOFING",
+    "VLAN_NATIVE_MISMATCH",
+    "STP_LOOP"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [
+    "VLAN_MISSING_FROM_DATABASE",
+    "VLAN_PRUNED",
+    "ARP_IP_CONFLICT"
+  ],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S04-001",
+    "events:EVT-S04-002",
+    "events:EVT-S04-003",
+    "vlan_databases:NYC-SW-01",
+    "trunk_ports:NYC-SW-01:Gi1/0/24",
+    "dhcp_events:DHCP-EVT-S04-001",
+    "protocol_events:PE-S04-01"
+  ],
+  "configuration": [
+    {
+      "device_id": "NYC-SW-01",
+      "golden_contains": [
+        "vlan 20",
+        " switchport trunk allowed vlan 10,20,99"
+      ],
+      "running_contains": [
+        " switchport trunk allowed vlan 10,99"
+      ],
+      "running_lacks": [
+        "vlan 20"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "device_id": "NYC-SW-01",
+      "command": "show vlan brief",
+      "expect": "No VLAN 20"
+    },
+    {
+      "device_id": "NYC-SW-01",
+      "command": "show interfaces trunk",
+      "expect": "Gi1/0/24 allows 10,99 only"
+    },
+    {
+      "device_id": "NYC-RTR-01",
+      "command": "show ip arp vlan 10",
+      "expect": "The conflicting address alternating between two MACs"
+    }
+  ],
+  "confidence": "Both VLAN findings are two-sided configuration evidence (high, at least 0.8); the address conflict is independently confirmed."
+}

@@ -36,7 +36,15 @@ SENSITIVE_TOKENS = re.compile(
 OUTPUT_FILTER = re.compile(r"\|\s*(include|exclude|begin|section|count)\b", re.IGNORECASE)
 PLACEHOLDER = re.compile(r"^\{[a-z_]+\}$")
 SAFE_NETWORKS = tuple(ipaddress.ip_network(net) for net in (
-    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32"))
+# A few read-only status commands outside the prefix list, each matched in full. "crypto" stays a sensitive token
+# everywhere else (show crypto key / pki remain blocked); only these SA and session status views are allowed.
+EXACT_READ_ONLY = (
+    re.compile(r"^show crypto (?:ikev2 sa|ipsec sa|session)(?: (?:detail|brief|peer \d{1,3}(?:\.\d{1,3}){3}))*$", re.IGNORECASE),
+    re.compile(r"^openssl s_client -connect (?P<host>[A-Za-z0-9.-]+):(?P<port>[0-9]{1,5})(?: -servername (?P<sni>[A-Za-z0-9.-]+))?(?: -brief)?$"),
+    re.compile(r"^ss -(?:tin|ti|tn)(?: dst (?P<dst>[0-9.]+))?$"),
+    re.compile(r"^netstat -s$"),
+)
 SAFE_HOSTNAME = re.compile(r"^(?:[a-z0-9-]+\.)*example\.(?:com|org|net)$", re.IGNORECASE)
 
 
@@ -67,6 +75,10 @@ def is_read_only_command(command: str) -> bool:
     normalized = " ".join(command.strip().split())
     if not normalized or len(normalized) > 200 or not ALLOWED_CHARACTERS.match(normalized):
         return False
+    for pattern in EXACT_READ_ONLY:
+        if match := pattern.match(normalized):
+            targets = [v for k, v in match.groupdict().items() if v and k != "port"]
+            return all(allowed_target(t) for t in targets) and (not match.groupdict().get("port") or 0 < int(match["port"]) <= 65535)
     if not any(normalized.lower().startswith(prefix) or normalized.lower() == prefix.strip()
                for prefix in READ_ONLY_PREFIXES):
         return False

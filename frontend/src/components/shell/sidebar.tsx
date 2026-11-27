@@ -13,6 +13,8 @@ import {
   FileText,
   LogOut,
   PanelLeft,
+  Radar,
+  ShieldCheck,
   Search,
   Settings,
   SquareTerminal,
@@ -22,7 +24,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo, type ComponentType, type ReactNode } from "react";
-import { Dot, Kbd } from "@/components/ui/atoms";
+import { DemoTag, Dot, Kbd } from "@/components/ui/atoms";
 import { Tip } from "@/components/ui/tip";
 import { useActiveIncidents, useHealth, useIncidents, useTopology } from "@/lib/api/hooks";
 import type { IncidentSummary } from "@/lib/api/types";
@@ -43,6 +45,8 @@ const NAV: NavEntry[] = [
   { href: "/diagnose", label: "Diagnose", icon: Activity, match: (p) => p.startsWith("/diagnose") },
   { href: "/incidents", label: "Incidents", icon: TriangleAlert, match: (p) => p.startsWith("/incidents") },
   { href: "/insights", label: "Network insights", icon: ChartLine, match: (p) => p.startsWith("/insights") },
+  { href: "/observability", label: "Observability", icon: Radar, match: (p) => p.startsWith("/observability") },
+  { href: "/protocols", label: "Protocols & security", icon: ShieldCheck, match: (p) => p.startsWith("/protocols") },
   { href: "/knowledge", label: "Knowledge base", icon: BookOpen, match: (p) => p.startsWith("/knowledge") },
   { href: "/reports", label: "Reports", icon: FileText, match: (p) => p.startsWith("/reports") },
   { href: "/cli", label: "Remote CLI", icon: SquareTerminal, match: (p) => p.startsWith("/cli") },
@@ -279,8 +283,11 @@ function RecentItem({
       >
         <Dot tone={done ? "muted" : statusTone(incident.status)} className="mt-[7px]" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-medium tracking-[-0.01em] text-ink">
-            {city} · {tag}
+          <span className="flex items-center gap-1.5">
+            <span className="min-w-0 truncate text-[13px] font-medium tracking-[-0.01em] text-ink">
+              {city} · {tag}
+            </span>
+            {incident.demo ? <DemoTag /> : null}
           </span>
           <span className="mt-0.5 block truncate text-[11.5px] text-ink-3">
             {done ? `${STATUS_LABEL[incident.status]} ${ago(incident.updated_at)}` : `${incident.incident_id.slice(4)} · ${STATUS_LABEL[incident.status]}`}

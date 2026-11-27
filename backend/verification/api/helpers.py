@@ -14,6 +14,7 @@ API = "/api/v1"
 PRINCIPALS = {
     "viewer": Principal(subject="viewer.one", kind="human", roles=["viewer"]),
     "operator": Principal(subject="noc.operator", kind="human", roles=["operator"]),
+    "other_operator": Principal(subject="noc.operator2", kind="human", roles=["operator"]),
     "manager": Principal(subject="noc.manager", kind="human", roles=["incident_manager"]),
     "second_manager": Principal(subject="network.lead", kind="human", roles=["incident_manager"]),
     "system": Principal(subject="diagnosis-service", kind="system", roles=["system_service"]),
@@ -21,7 +22,7 @@ PRINCIPALS = {
     "librarian": Principal(subject="kb.owner", kind="human", roles=["knowledge_manager"]),
 }
 EXPECTED_ROUTES = {
-    "/health": {"get"}, f"{API}/auth/verify": {"post"}, f"{API}/auth/login": {"post"},
+    "/health": {"get"}, f"{API}/auth/verify": {"post"}, f"{API}/auth/login": {"post"}, f"{API}/auth/logout": {"post"},
     f"{API}/dashboard/summary": {"get"}, f"{API}/dashboard/incidents": {"get"}, f"{API}/dashboard/network-health": {"get"},
     f"{API}/topology": {"get"}, f"{API}/topology/sites": {"get"}, f"{API}/topology/sites/{{site_id}}": {"get"},
     f"{API}/topology/devices": {"get"}, f"{API}/topology/devices/{{device_id}}": {"get"},
@@ -45,6 +46,20 @@ EXPECTED_ROUTES = {
     f"{API}/conversations/{{conversation_id}}/context": {"get", "delete"},
     f"{API}/conversations/{{conversation_id}}/investigations/{{investigation_id}}": {"get"},
     f"{API}/conversations/{{conversation_id}}/investigations/{{investigation_id}}/attach": {"post"},
+    f"{API}/conversations/{{conversation_id}}/investigations/{{investigation_id}}/reasoning": {"get"},
+    f"{API}/diagnosis/multi-agent": {"post"},
+    f"{API}/protocols/engines": {"get"},
+    f"{API}/protocols/analyze": {"post"},
+    f"{API}/observability/sources": {"get"}, f"{API}/observability/ingest/telemetry": {"post"},
+    f"{API}/observability/ingest/streaming": {"post"}, f"{API}/observability/ingest/syslog": {"post"},
+    f"{API}/observability/ingest/traps": {"post"}, f"{API}/observability/ingest/flows": {"post"},
+    f"{API}/observability/live": {"get"}, f"{API}/observability/stream": {"get"}, f"{API}/observability/topology/live": {"get"},
+    f"{API}/observability/snmp": {"get"}, f"{API}/observability/traps": {"get"}, f"{API}/observability/syslog": {"get"},
+    f"{API}/observability/flows": {"get"}, f"{API}/observability/traffic": {"get"}, f"{API}/observability/baselines": {"get"},
+    f"{API}/observability/health": {"get"}, f"{API}/observability/forecast": {"get"}, f"{API}/observability/congestion": {"get"},
+    f"{API}/observability/discovery": {"get"}, f"{API}/observability/dependencies": {"get"}, f"{API}/observability/drift": {"get"},
+    f"{API}/observability/drift/{{device_id}}/diff": {"get"}, f"{API}/observability/journey": {"get"},
+    f"{API}/observability/reliability": {"get"},
 }
 
 
@@ -67,7 +82,8 @@ class ApiHarness:
         self.tokens["expired"] = issue_token(self.tokens_file, PRINCIPALS["manager"], 1,
                                              now=datetime.now(timezone.utc) - timedelta(hours=3))
         values = {"incident_store_dir": str(root / "incidents"), "auth_tokens_file": str(self.tokens_file),
-                  "rate_limit_requests": 10_000} | settings
+                  "conversation_store_dir": str(root / "conversations"), "rate_limit_requests": 10_000,
+                  "demo_incidents": False} | settings
         self.settings = Settings(_env_file=None, **values)
         self.client = TestClient(create_app(self.settings), raise_server_exceptions=False)
 

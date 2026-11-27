@@ -7,3 +7,47 @@ __pycache__/
 .pytest_cache/
 var/
 .DS_Store
+
+# Python tool caches
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Test and coverage reports
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+coverage.xml
+junit*.xml
+test-results/
+test-reports/
+playwright-report/
+blob-report/
+
+# Execution logs
+*.log
+
+# Temporary and scratch output
+tmp/
+temp/
+*.tmp
+*.bak
+*.orig
+screenshots/
+shots/
+/frontend/undefined/
+
+# Generated audit, verification and run reports (project documentation is README.md, DESIGN.md and similar)
+*-report.md
+*_report.md
+*-report.html
+*_report.html
+*-audit.md
+*_audit.md
+AUDIT*.md
+VERIFICATION*.md
+
+# Postman local-workspace scratch collections can embed bearer tokens.
+# The shared collection and environment are postman/*.postman_collection.json and postman/*.postman_environment.json.
+postman/collections/

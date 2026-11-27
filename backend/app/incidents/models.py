@@ -303,6 +303,8 @@ class Incident(IncidentModel):
     description: Text
     source: IncidentSource
     dataset_scenario_id: Identifier | None = None
+    # Seeded from a synthetic dataset scenario for demonstration (app/incidents/demo.py); never set from a request.
+    demo: bool = False
     site_ids: list[Identifier] = Field(min_length=1, max_length=10)
     symptoms: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(default_factory=list, max_length=20)
     severity: IncidentSeverity
@@ -326,6 +328,11 @@ class Incident(IncidentModel):
     created_at: UtcDatetime
     updated_at: UtcDatetime
     timeline: list[TimelineEvent] = Field(min_length=1)
+
+    @property
+    def created_by_id(self) -> str:
+        """The principal that reported the incident: the actor of its first (creation) timeline event."""
+        return self.timeline[0].actor.actor_id
 
     @property
     def active_diagnosis(self) -> DiagnosisRecord | None:
@@ -421,6 +428,10 @@ class IncidentSummary(IncidentModel):
     fault_domain: FaultDomain | None
     created_at: datetime
     updated_at: datetime
+    created_by: str | None = None
+    assigned_owner: str | None = None
+    dataset_scenario_id: str | None = None
+    demo: bool = False
 
     @classmethod
     def of(cls, incident: Incident) -> "IncidentSummary":
@@ -428,4 +439,6 @@ class IncidentSummary(IncidentModel):
                           if a.asset_type in (AssetType.DEVICE, AssetType.SHARED_DEPENDENCY)})
         return cls(incident_id=incident.incident_id, title=incident.title, site_ids=incident.site_ids, device_ids=devices,
                    severity=incident.severity, priority=incident.priority, status=incident.status,
-                   fault_domain=incident.fault_domain, created_at=incident.created_at, updated_at=incident.updated_at)
+                   fault_domain=incident.fault_domain, created_at=incident.created_at, updated_at=incident.updated_at,
+                   created_by=incident.created_by_id, assigned_owner=incident.assigned_owner,
+                   dataset_scenario_id=incident.dataset_scenario_id, demo=incident.demo)

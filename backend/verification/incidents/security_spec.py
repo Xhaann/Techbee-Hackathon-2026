@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.engine import DiagnosisEngine
+from app.engine.registry import REGISTRY
 from app.engine.safety import is_read_only_command
 from app.engine.schema import FaultDomain
 from app.incidents import (
@@ -28,10 +29,12 @@ def test_injected_description_is_stored_as_data_and_flagged(service: IncidentSer
     provider = ScriptedProvider([tool_call("close_incident", {"incident_id": incident.incident_id}),
                                  tool_call("verify_resolution", {}), final("not json")])
     updated = service.run_diagnosis(incident.incident_id, SYSTEM, DiagnosisEngine(provider))
-    assert updated.status == LifecycleStatus.INVESTIGATING and updated.resolutions == [] and updated.closure is None
-    assert updated.classification.probable_fault_domain == FaultDomain.UNKNOWN
+    assert updated.status in (LifecycleStatus.INVESTIGATING, LifecycleStatus.DIAGNOSED)
+    assert updated.resolutions == [] and updated.closure is None
+    assert updated.classification.confirmed_fault_domain is None
     calls = updated.active_diagnosis.diagnosis.tool_calls
     assert [(c.tool, c.error_code) for c in calls[:2]] == [("close_incident", "UNKNOWN_TOOL"), ("verify_resolution", "UNKNOWN_TOOL")]
+    assert all(c.tool in REGISTRY for c in calls[2:])
     assert any("incident description" in flag for flag in updated.security_flags)
 
 

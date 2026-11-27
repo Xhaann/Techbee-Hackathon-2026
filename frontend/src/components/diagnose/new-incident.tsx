@@ -1,12 +1,12 @@
 "use client";
 
 import { Toggle as ToggleButton } from "@ui-sdk/react/toggle";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Dot, ErrorNote, Pill } from "@/components/ui/atoms";
 import { Button, Spinner } from "@/components/ui/button";
-import { Toggle } from "@/components/ui/controls";
+import { Segmented, Toggle } from "@/components/ui/controls";
 import { ALL, FieldGroup, SelectBox, TextAreaField, TextField } from "@/components/ui/fields";
 import { notify } from "@/components/ui/toaster";
 import { describeError } from "@/lib/api/client";
@@ -135,6 +135,11 @@ export function NewIncident() {
   }
 
   const sites = topology.data?.sites ?? [];
+  const missing = [
+    draft.title.trim().length < 3 ? "a title" : null,
+    draft.description.trim() ? null : "what users report",
+    draft.siteIds.length ? null : "a site",
+  ].filter((part): part is string => part !== null);
 
   return (
     <form
@@ -142,109 +147,247 @@ export function NewIncident() {
         event.preventDefault();
         void open();
       }}
-      className="space-y-5"
+      className="card @container relative overflow-hidden"
     >
-      <div>
-        <div className="mb-2 text-[12.5px] text-ink-3">Start from a reported problem</div>
-        <div className="flex flex-wrap gap-1.5">
-          {SCENARIOS.filter((s) => s.report).map((scenario) => (
-            <button
-              key={scenario.id}
-              type="button"
-              onClick={() => startFrom(scenario)}
-              className={cn(
-                "h-7 rounded-[7px] px-2.5 text-[12.5px] transition-colors",
-                draft.scenarioId === scenario.id && draft.title === scenario.report?.title
-                  ? "bg-selected text-ink shadow-[0_0_0_1px_var(--accent-ring)]"
-                  : "bg-surface text-ink-2 shadow-[0_0_0_1px_var(--line)] hover:bg-hover hover:text-ink",
-              )}
-            >
-              {scenario.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <TextField label="Title" value={draft.title} onChange={(title) => update({ title })} required minLength={3} maxLength={200} placeholder="Singapore office cannot reach any corporate service" />
-      <TextAreaField
-        label="What users report"
-        value={draft.description}
-        onChange={(description) => update({ description })}
-        required
-        maxLength={4000}
-        placeholder="Who is affected, what fails, since when. Name the site or city; the planner reads it."
+      <ScenarioPicker
+        selectedId={draft.scenarioId}
+        isSelected={(scenario) => draft.scenarioId === scenario.id && draft.title === scenario.report?.title}
+        onPick={startFrom}
       />
 
-      <FieldGroup label="Sites">
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sites">
-          {(sites.length ? sites : [{ site_id: "SIN", city: "Singapore" }, { site_id: "NYC", city: "New York" }, { site_id: "BLR", city: "Bengaluru" }]).map((site) => (
-            <ToggleButton
-              key={site.site_id}
-              pressed={draft.siteIds.includes(site.site_id)}
-              onPressedChange={(pressed) =>
-                update({ siteIds: pressed ? [...draft.siteIds, site.site_id] : draft.siteIds.filter((id) => id !== site.site_id) })
-              }
-              className="inline-flex h-8 items-center gap-1.5 rounded-[7px] bg-surface px-2.5 text-[12.5px] text-ink-2 shadow-[0_0_0_1px_var(--line)] transition-colors hover:text-ink data-pressed:bg-selected data-pressed:text-ink data-pressed:shadow-[0_0_0_1px_var(--accent-ring)]"
-            >
-              <span className="font-mono text-[11px] text-ink-3">{site.site_id}</span>
-              {site.city}
-            </ToggleButton>
-          ))}
+      <div className="space-y-4 px-5 py-5 shadow-[inset_0_1px_0_var(--line-soft)]">
+        <TextField label="Title" value={draft.title} onChange={(title) => update({ title })} required minLength={3} maxLength={200} placeholder="Singapore office cannot reach any corporate service" />
+        <div className="grid gap-4 @xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <TextAreaField
+            label="What users report"
+            value={draft.description}
+            onChange={(description) => update({ description })}
+            required
+            rows={4}
+            maxLength={4000}
+            placeholder="Who is affected, what fails, since when. Name the site or city; the planner reads it."
+          />
+          <TextAreaField
+            label={
+              <span className="flex items-baseline justify-between gap-3">
+                Symptoms
+                <span className="font-normal text-ink-4">One per line, optional</span>
+              </span>
+            }
+            rows={4}
+            value={draft.symptoms}
+            onChange={(symptoms) => update({ symptoms })}
+            placeholder={"Slow ERP response\nCalls drop"}
+          />
         </div>
-      </FieldGroup>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <FieldGroup label="Telemetry dataset">
-          <SelectBox ariaLabel="Telemetry dataset" value={draft.scenarioId} onValueChange={(scenarioId) => update({ scenarioId })} options={SCENARIOS.map((s) => ({ value: s.id, label: s.name }))} />
-        </FieldGroup>
-        <FieldGroup label="Priority">
-          <SelectBox
-            ariaLabel="Priority"
-            value={draft.priority}
-            onValueChange={(priority) => update({ priority })}
-            options={[{ value: ALL, label: "Derive from severity" }, ...(Object.keys(PRIORITY_LABEL) as IncidentPriority[]).map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))]}
-          />
-        </FieldGroup>
-        <FieldGroup label="Reported through">
-          <SelectBox
-            ariaLabel="Reported through"
-            value={draft.source}
-            onValueChange={(source) => update({ source })}
-            options={(["user_report", "monitoring", "service_desk"] as IncidentSource[]).map((s) => ({ value: s, label: SOURCE_LABEL[s] }))}
-          />
-        </FieldGroup>
       </div>
 
-      <TextAreaField label="Symptoms" hint="Optional. One per line." rows={3} value={draft.symptoms} onChange={(symptoms) => update({ symptoms })} />
+      <div className="space-y-4 px-5 py-5 shadow-[inset_0_1px_0_var(--line-soft)]">
+        <FieldGroup label="Sites">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Sites">
+            {(sites.length ? sites : [{ site_id: "SIN", city: "Singapore" }, { site_id: "NYC", city: "New York" }, { site_id: "BLR", city: "Bengaluru" }]).map((site) => (
+              <ToggleButton
+                key={site.site_id}
+                pressed={draft.siteIds.includes(site.site_id)}
+                onPressedChange={(pressed) =>
+                  update({ siteIds: pressed ? [...draft.siteIds, site.site_id] : draft.siteIds.filter((id) => id !== site.site_id) })
+                }
+                className="inline-flex h-10 items-center gap-2 rounded-[8px] bg-sunken px-3 text-[13px] text-ink-2 shadow-[0_0_0_1px_var(--line)] transition-[background-color,color,box-shadow] duration-150 hover:text-ink data-pressed:bg-selected data-pressed:text-ink data-pressed:shadow-[0_0_0_1px_var(--accent-ring)]"
+              >
+                <span className="font-mono text-[11px] text-ink-4">{site.site_id}</span>
+                {site.city}
+              </ToggleButton>
+            ))}
+          </div>
+        </FieldGroup>
+        <div className="grid gap-4 @lg:grid-cols-2 @2xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1.1fr)_minmax(0,1fr)]">
+          <div className="@lg:col-span-2 @2xl:col-span-1">
+            <FieldGroup label="Telemetry dataset">
+              <SelectBox ariaLabel="Telemetry dataset" value={draft.scenarioId} onValueChange={(scenarioId) => update({ scenarioId })} options={SCENARIOS.map((s) => ({ value: s.id, label: s.name }))} />
+            </FieldGroup>
+          </div>
+          <FieldGroup label="Priority">
+            <SelectBox
+              ariaLabel="Priority"
+              value={draft.priority}
+              onValueChange={(priority) => update({ priority })}
+              options={[{ value: ALL, label: "Derive from severity" }, ...(Object.keys(PRIORITY_LABEL) as IncidentPriority[]).map((p) => ({ value: p, label: PRIORITY_LABEL[p] }))]}
+            />
+          </FieldGroup>
+          <FieldGroup label="Reported through">
+            <SelectBox
+              ariaLabel="Reported through"
+              value={draft.source}
+              onValueChange={(source) => update({ source })}
+              options={(["user_report", "monitoring", "service_desk"] as IncidentSource[]).map((s) => ({ value: s, label: SOURCE_LABEL[s] }))}
+            />
+          </FieldGroup>
+        </div>
+      </div>
 
-      {duplicate ? <DuplicateNotice outcome={duplicate} onOpenAnyway={() => void open(true)} onGo={(id) => router.push(`/diagnose/${id}`)} /> : null}
-      {error ? <ErrorNote message={error} /> : null}
+      {duplicate || error ? (
+        <div className="space-y-3 px-5 pb-5">
+          {duplicate ? <DuplicateNotice outcome={duplicate} onOpenAnyway={() => void open(true)} onGo={(id) => router.push(`/diagnose/${id}`)} /> : null}
+          {error ? <ErrorNote message={error} /> : null}
+        </div>
+      ) : null}
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-3 pt-1">
-        <button
-          type="submit"
-          disabled={!valid || !!stage}
-          className="inline-flex h-10 items-center gap-2 rounded-[8px] bg-accent-strong px-4 text-[14px] font-medium tracking-[-0.01em] text-accent-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.14),0_1px_2px_rgb(0_0_0/0.3)] transition-[background-color,translate] duration-150 hover:bg-accent-strong-hover active:translate-y-px disabled:opacity-45"
-        >
-          {stage ? <Spinner /> : null}
-          {stage ?? (diagnoseNow && canDiagnose ? "Open and diagnose" : "Open incident")}
-          {!stage ? <ArrowRight className="size-4" aria-hidden /> : null}
-        </button>
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 bg-panel px-5 py-3.5 shadow-[inset_0_1px_0_var(--line-soft)]">
         {canDiagnose ? <Toggle checked={diagnoseNow} onCheckedChange={setDiagnoseNow} label="Acknowledge and diagnose right away" /> : null}
-        {canDiagnose ? (
+        <div className="ml-auto flex w-full flex-col gap-1.5 sm:w-auto sm:items-end">
+          <div className="flex items-center justify-end gap-5">
+          {canDiagnose ? (
+            <button
+              type="button"
+              disabled={!valid || quick.isPending}
+              onClick={() => void quickCheck()}
+              className="text-[13px] text-ink-3 underline decoration-line-strong underline-offset-4 transition-colors hover:text-ink disabled:opacity-45 disabled:no-underline"
+            >
+              {quick.isPending ? "Checking" : "Check without saving"}
+            </button>
+          ) : null}
           <button
-            type="button"
-            disabled={!valid || quick.isPending}
-            onClick={() => void quickCheck()}
-            className="text-[13px] text-ink-3 underline decoration-line-strong underline-offset-4 hover:text-ink disabled:opacity-45 disabled:no-underline"
+            type="submit"
+            disabled={!valid || !!stage}
+            className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-[8px] bg-accent-strong px-4 sm:flex-none text-[14px] font-medium tracking-[-0.01em] text-accent-fg shadow-[inset_0_1px_0_rgb(255_255_255/0.14),0_1px_2px_rgb(0_0_0/0.3)] transition-[background-color,translate,opacity] duration-150 hover:bg-accent-strong-hover active:translate-y-px disabled:opacity-45"
           >
-            {quick.isPending ? "Checking" : "Check without saving"}
+            {stage ? <Spinner /> : null}
+            {stage ?? (diagnoseNow && canDiagnose ? "Open and diagnose" : "Open incident")}
+            {!stage ? <ArrowRight className="size-4" aria-hidden /> : null}
           </button>
-        ) : null}
+          </div>
+          {missing.length && !stage ? (
+            <span className="text-[12px] text-ink-4 sm:text-right">
+              Add {missing.length === 1 ? missing[0] : `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}`} to open it
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {preview ? <QuickResult diagnosis={preview} /> : null}
     </form>
+  );
+}
+
+type Family = "outages" | "protocols" | "incidents";
+const FAMILIES: { value: Family; label: string; short: string }[] = [
+  { value: "outages", label: "Outages", short: "Outages" },
+  { value: "protocols", label: "Protocol & security", short: "Protocols" },
+  { value: "incidents", label: "Incident set", short: "Incidents" },
+];
+
+/** Datasets fall into three families by id: the core outages, the protocol and security set, and the incident set. */
+function familyOf(id: string): Family {
+  return id.startsWith("P3-") ? "protocols" : id.startsWith("SCN-") ? "incidents" : "outages";
+}
+
+/** The name without the set prefix it repeats ("Phase 3 · ", "Scenario 05 · "); the incident set keeps its number. */
+function displayName(scenario: Scenario): { number?: string; name: string } {
+  const numbered = scenario.name.match(/^Scenario (\d+) · (.+)$/);
+  if (numbered) return { number: numbered[1], name: numbered[2] };
+  return { name: scenario.name.replace(/^Phase 3 · /, "") };
+}
+
+/** Which ends of a scrolling list hide items, for a fade that says there is more. */
+function useScrollEdges(deps: unknown) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ top: false, bottom: false });
+  useEffect(() => {
+    const list = ref.current;
+    if (!list) return;
+    const update = () => {
+      const top = list.scrollTop > 1;
+      const bottom = list.scrollTop + list.clientHeight < list.scrollHeight - 1;
+      setEdges((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }));
+    };
+    update();
+    list.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(list);
+    return () => {
+      list.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [deps]);
+  const mask = edges.top || edges.bottom
+    ? `linear-gradient(to bottom, ${edges.top ? "transparent 0, #000 20px" : "#000 0"}, ${edges.bottom ? "#000 calc(100% - 24px), transparent 100%" : "#000 100%"})`
+    : undefined;
+  return { ref, style: mask ? ({ maskImage: mask, WebkitMaskImage: mask } as CSSProperties) : undefined };
+}
+
+function ScenarioPicker({
+  selectedId,
+  isSelected,
+  onPick,
+}: {
+  selectedId: string;
+  isSelected: (scenario: Scenario) => boolean;
+  onPick: (scenario: Scenario) => void;
+}) {
+  const reported = SCENARIOS.filter((s) => s.report);
+  const [family, setFamily] = useState<Family>(() => familyOf(selectedId));
+  const shown = reported.filter((s) => familyOf(s.id) === family);
+  const { ref, style } = useScrollEdges(family);
+  const count = (value: Family) => reported.filter((s) => familyOf(s.id) === value).length;
+
+  return (
+    <div className="px-5 pt-4 pb-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <h2 className="text-[13.5px] font-medium tracking-[-0.01em] text-ink">Start from a reported problem</h2>
+        <Segmented
+          size="sm"
+          ariaLabel="Scenario family"
+          value={family}
+          onValueChange={setFamily}
+          options={FAMILIES.map((option) => ({
+            value: option.value,
+            label: (
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                <span className="@md:hidden">{option.short}</span>
+                <span className="hidden @md:inline">{option.label}</span>
+                <span className="text-ink-4 tabular-nums">{count(option.value)}</span>
+              </span>
+            ),
+          }))}
+        />
+      </div>
+      <div ref={ref} style={style} className="scroll-thin -mx-1 mt-3.5 max-h-[252px] overflow-y-auto px-1 py-1">
+        <div role="group" aria-label={`${FAMILIES.find((f) => f.value === family)?.label} scenarios`} className="grid gap-2 @lg:grid-cols-2 @3xl:grid-cols-3">
+          {shown.map((scenario) => {
+            const selected = isSelected(scenario);
+            const { number, name } = displayName(scenario);
+            return (
+              <button
+                key={scenario.id}
+                type="button"
+                aria-pressed={selected}
+                title={scenario.name}
+                onClick={() => onPick(scenario)}
+                className={cn(
+                  "group flex min-h-[56px] w-full items-start gap-2.5 rounded-[8px] px-3 py-2.5 text-left transition-[background-color,box-shadow] duration-150",
+                  selected ? "bg-selected shadow-[0_0_0_1px_var(--accent-ring)]" : "bg-sunken shadow-[0_0_0_1px_var(--line-soft)] hover:bg-hover",
+                )}
+              >
+                {number ? <span className="mt-[2px] w-4 shrink-0 font-mono text-[11px] text-ink-4 tabular-nums">{number}</span> : null}
+                <span className="min-w-0 flex-1">
+                  <span className={cn("line-clamp-2 text-[13px] leading-[1.35] tracking-[-0.005em]", selected ? "text-ink" : "text-ink-2 group-hover:text-ink")}>
+                    {name}
+                  </span>
+                  {scenario.report ? (
+                    <span className="mt-1 flex items-center gap-1.5 text-[11.5px] text-ink-4">
+                      <span className="font-mono text-[11px]">{scenario.report.siteIds.join(" ")}</span>
+                      <span aria-hidden>·</span>
+                      <span className="tabular-nums">{PRIORITY_LABEL[scenario.report.priority]}</span>
+                    </span>
+                  ) : null}
+                </span>
+                <Check aria-hidden className={cn("mt-[2px] size-3.5 shrink-0 text-accent", selected ? "opacity-100" : "opacity-0")} />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -278,7 +421,7 @@ function DuplicateNotice({ outcome, onOpenAnyway, onGo }: { outcome: CreationOut
 
 function QuickResult({ diagnosis }: { diagnosis: Diagnosis }) {
   return (
-    <section aria-label="Quick check result" className="card-raised px-5 py-4">
+    <section aria-label="Quick check result" className="px-5 py-5 shadow-[inset_0_1px_0_var(--line-soft)]">
       <div className="flex items-center gap-2 text-[12px] text-ink-3">
         <Dot tone="muted" />
         Not saved · {diagnosis.tool_calls.length} tool calls · {diagnosis.evidence.length} evidence items

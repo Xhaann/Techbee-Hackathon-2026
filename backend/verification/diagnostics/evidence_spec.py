@@ -6,6 +6,7 @@ from app import diagnostics
 from app.diagnostics import EvidenceRef, ToolResult
 from app.network.models import InterfaceMode, ScenarioDataset
 from app.network.repository import list_scenario_ids, load_scenario, load_topology
+from app.observability.simulation import monitored_interfaces, scenario_flows
 from verification.diagnostics.helpers import ok
 
 SITE_NETWORKS = {"NYC": "10.10.0.0/16", "SIN": "10.20.0.0/16", "BLR": "10.30.0.0/16", "CORE": "10.0.0.0/24",
@@ -28,15 +29,21 @@ def record_index(dataset: ScenarioDataset) -> dict[str, dict[str, datetime | Non
         "dhcp_events": {e.event_id: e.timestamp for e in dhcp.events},
         "dhcp_leases": {f"{lease.pool_id}:{lease.ip_address}": None for lease in dhcp.leases},
         "dns_queries": {q.query_id: q.timestamp for q in dataset.dns.queries},
+        "flows": {f.flow_id: f.start for f in scenario_flows(dataset.scenario.scenario_id)},
+        "configurations": {d.device_id: None for d in load_topology().devices if d.device_type.value != "server"},
+        "interface_history": {i: None for i in monitored_interfaces(dataset)},
     }
 
 
 def sweep(scenario_id: str) -> list[ToolResult]:
     topology = load_topology()
     results = []
+    results.append(diagnostics.get_change_history(scenario_id))
     for device in topology.devices:
         device_id = device.device_id
         results += [
+            diagnostics.get_event_timeline(scenario_id, device_id=device_id),
+            diagnostics.get_change_history(scenario_id, device_id=device_id),
             diagnostics.get_device_logs(scenario_id, device_id),
             diagnostics.get_interface_stats(scenario_id, device_id),
             diagnostics.get_routing_state(scenario_id, device_id),
@@ -53,6 +60,12 @@ def sweep(scenario_id: str) -> list[ToolResult]:
     for branch in ("NYC", "SIN", "BLR"):
         for server in SERVERS:
             results.append(diagnostics.check_network_reachability(scenario_id, f"{branch}-SW-01", server))
+            results.append(diagnostics.analyze_path_health(scenario_id, f"{branch}-SW-01", server))
+        for server, protocol, port in (("DC1-SRV-APP-01", "tcp", 443), ("DC1-SRV-AUTH-01", "udp", 1812), ("DC1-SRV-DNS-01", "udp", 53)):
+            results.append(diagnostics.trace_packet(scenario_id, f"{branch}-SW-01", server, protocol, port))
+    results += [diagnostics.get_network_health(scenario_id), diagnostics.get_config_drift(scenario_id),
+                diagnostics.analyze_traffic_flows(scenario_id), diagnostics.forecast_capacity(scenario_id)]
+    results += [diagnostics.analyze_traffic_flows(scenario_id, site_id=site) for site in ("NYC", "SIN", "BLR")]
     return [ok(result) for result in results]
 
 

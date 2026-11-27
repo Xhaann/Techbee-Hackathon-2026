@@ -9,6 +9,7 @@ from app.api.router import api_router
 from app.api.routes import health
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
+from app.incidents.demo import seed_on_startup
 from app.security.api import (
     ConcurrencyLimiter,
     ConcurrencyLimitMiddleware,
@@ -22,10 +23,16 @@ from app.security.api import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    services = app.state.services
+    if services.settings.demo_incidents:
+        seed_on_startup(services.incidents)
     await app.state.services.agent.start()
     try:
+        # Inside the try: if a telemetry receiver fails to start, the agent and conversations still shut down cleanly.
+        await app.state.services.observability.start()
         yield
     finally:
+        await app.state.services.observability.stop()
         app.state.services.shutdown_conversations()
         await app.state.services.agent.close()
 

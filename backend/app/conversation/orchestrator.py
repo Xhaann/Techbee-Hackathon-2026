@@ -13,21 +13,28 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Literal
 
 from starlette.concurrency import run_in_threadpool
 
 from app.agent import DiagnosisAgent, build_report
 from app.agent.tools import KNOWLEDGE_TOOL
-from app.conversation.composer import ReplyComposer
+from app.conversation import assist
+from app.conversation.composer import ReplyComposer, grounding_issues
+from app.conversation.concepts import comparison, explain_concepts
 from app.conversation.digests import digest
 from app.conversation.entities import TopologyIndex, topology_index
-from app.conversation.intents import TOPIC_LABEL, Planner, classify
+from app.conversation.intents import AFFIRM, TOPIC_LABEL, TOPIC_TOOL, USER_REPORT, WHAT_HAPPENED, Planner, classify, human_action_in
+from app.conversation.plain import FAULT_PLAIN, HEALTHY, Namer, capital, first_mention, ids_text, join, problem as problem_of, sentence
+from app.conversation.plain import lower_first as plain_lower
 from app.conversation.models import (
+    Attachment,
     Clarification,
     ConversationContext,
     EvidenceReference,
     ExecutionSummary,
+    GeneratedBy,
     HumanConfirmation,
     Intent,
     IntentResult,
@@ -49,10 +56,15 @@ from app.engine.executor import MAX_TOOL_CALLS, ToolCallRecord, ToolExecutor
 from app.engine.planner import DiagnosisRequestError
 from app.engine.registry import REGISTRY
 from app.engine.schema import Diagnosis, EvidenceItem, EvidenceType
-from app.incidents.models import Incident
+from app.incidents.models import Incident, IncidentFilter
 from app.knowledge.retrieval import KnowledgeQuery, render
-from app.network.models import PathService
-from app.network.repository import list_scenario_ids
+from app.network.models import DeviceRole, PathService
+from app.network.repository import load_scenario, scenario_exists
+from app.protocols.analysis import analyze as protocol_analyze, engines_for_symptoms
+from app.protocols.registry import BY_NAME as PROTOCOL_ENGINES
+from app.reasoning.inference import percent
+from app.reasoning.report import ReasoningReport, analyze
+from app.reasoning.specialists import AGENTS, PlannedCheck, Scope, checks_from_records, investigate as team_investigate
 from app.security.permissions import HUMAN_ONLY, Permission, Principal
 from app.security.secrets import redact
 
@@ -64,25 +76,66 @@ FAULT_LABEL = {"wan_isp": "WAN / ISP circuit", "routing": "routing", "switching"
                "vlan_authentication": "VLAN / 802.1X authentication", "dhcp": "DHCP", "dns": "DNS",
                "network_device_failure": "network device failure", "interface_link": "interface / physical link",
                "shared_infrastructure": "shared infrastructure", "unknown": "unknown"}
+PROTOCOL_SHORT = {"bgp": "BGP route", "ospf": "OSPF database", "stp": "spanning-tree", "arp": "ARP", "vlan": "trunk and VLAN", "nat": "NAT",
+                  "ipsec": "VPN tunnel", "tcp": "TCP retransmission", "mtu": "MTU", "qos": "QoS", "ipv6": "IPv6", "wireless": "Wi-Fi",
+                  "multicast": "multicast", "tls": "certificate and TLS", "threats": "threat correlation", "traffic": "suspicious-traffic",
+                  "lateral": "lateral-movement", "all": "protocol and security"}
+PROTOCOL_STATUS = {"confirmed_fault": "confirmed", "suspicious_indicator": "suspicious, not confirmed", "possible_explanation": "possible",
+                   "insufficient_evidence": "not enough data"}
 TOOL_LABEL = {"get_topology": "Site topology", "get_device_logs": "Device logs", "get_interface_stats": "Interface statistics",
               "get_routing_state": "Routing state", "get_firewall_logs": "Firewall logs", "get_dhcp_dns_status": "DHCP and DNS status",
               "check_network_reachability": "Path reachability", "analyze_packet_loss": "Packet loss analysis",
               "analyze_interface_errors": "Interface error analysis", "analyze_routing_adjacency": "Routing adjacency analysis",
               "check_device_availability": "Device availability", "analyze_network_dependencies": "Dependency analysis",
-              KNOWLEDGE_TOOL: "Knowledge search"}
+              "analyze_path_health": "Path health", "get_event_timeline": "Event timeline", "get_change_history": "Change history",
+              "get_network_health": "Health scores", "get_config_drift": "Configuration drift",
+              "analyze_traffic_flows": "Traffic flows", "trace_packet": "Packet journey", "forecast_capacity": "Capacity forecast",
+              "analyze_protocol": "Protocol check", KNOWLEDGE_TOOL: "Knowledge search"}
 EVIDENCE_KIND = {
     EvidenceType.OBSERVED_FINDING: ("an observed finding", "It was measured directly in the synthetic telemetry, not inferred."),
     EvidenceType.INFERRED_FINDING: ("an inferred finding", "The tool inferred it from other data, so it is weaker than a direct observation."),
     EvidenceType.OBSERVED_RESULT: ("an observed result", "It is the outcome of an evaluation the tool ran, such as a path or availability check."),
     EvidenceType.RECORD: ("a log record", "It is a raw log line, quoted as recorded."),
 }
-SCOPE_TEXT = {"everyone": "everyone at the site", "some": "some users", "single": "a single user"}
+SCOPE_TEXT = {"everyone": "everyone", "some": "some users", "single": "a single user"}
+SERVICE_TEXT = {"application": "internal applications", "internet": "internet access", "dns": "name resolution",
+                "dhcp": "IP addressing (DHCP)", "authentication": "network sign-in (802.1X)"}
+ASSUMED = {"scope": "number of affected users", "services": "affected services"}
+ACRONYMS = re.compile(r"\b(erp|dns|dhcp|vpn|wan|lan|crm|sap|voip|wi-?fi|ip)\b", re.IGNORECASE)
+TOOL_TOPIC = {"get_routing_state": "routing", "analyze_routing_adjacency": "adjacency", "analyze_packet_loss": "packet_loss",
+              "analyze_interface_errors": "errors", "get_interface_stats": "interfaces", "get_device_logs": "logs",
+              "check_device_availability": "availability", "get_dhcp_dns_status": "dhcp_dns", "get_topology": "topology",
+              "analyze_network_dependencies": "dependencies", "check_network_reachability": "reachability",
+              "get_firewall_logs": "firewall", "analyze_path_health": "path_health", "get_event_timeline": "timeline",
+              "get_change_history": "changes", "get_network_health": "health_score", "get_config_drift": "drift",
+              "analyze_traffic_flows": "traffic", "trace_packet": "journey", "forecast_capacity": "capacity"}
+# A hypothesis question maps to the evidence codes that bear on it and to the check that would test it.
+HYPOTHESIS_CODES = {
+    "firewall": ("TRAFFIC_DENIED", "RULE_MODIFIED", "POLICY_"),
+    "dns": ("DNS_",),
+    "dhcp": ("DHCP_",),
+    "vlan_authentication": ("DOT1X_", "PORT_UNAUTHORIZED", "RADIUS_"),
+    "routing": ("ADJACENCY_", "NEIGHBOR_", "ROUTES_", "NEXT_HOP", "NO_ROUTE", "CONTROL_PLANE", "BGP_", "OSPF_"),
+    "wan_isp": ("LINK_DOWN", "LINK_FLAP", "CARRIER_LOSS", "WAN_", "PACKET_LOSS", "PHYSICAL_LAYER", "PATH_SEGMENT"),
+    "interface_link": ("INTERFACE", "HIGH_ERROR", "HIGH_DROP", "PHYSICAL_LAYER", "OPTICAL", "PATH_SEGMENT", "ERROR_COUNT"),
+    "shared_infrastructure": ("TELEMETRY_GAP", "PEER_LINKS_DOWN", "DEVICE_FAILURE", "SHARED_"),
+    "network_device_failure": ("TELEMETRY_GAP", "PEER_LINKS_DOWN", "DEVICE_FAILURE", "DEVICE_UNREACHABLE"),
+    "switching": ("LINK_DOWN_ON_PATH", "STP_", "VLAN_"),
+}
+HYPOTHESIS_TOPIC = {"firewall": "firewall", "dns": "dhcp_dns", "dhcp": "dhcp_dns", "routing": "adjacency", "wan_isp": "packet_loss",
+                    "interface_link": "errors", "shared_infrastructure": "dependencies", "network_device_failure": "availability",
+                    "vlan_authentication": "logs", "switching": "logs"}
+BEYOND_THE_SITE = {"firewall": "the data-centre firewall", "dns": "the DNS servers in the data centre",
+                   "dhcp": "the DHCP server in the data centre", "vlan_authentication": "the RADIUS server in the data centre"}
+DOWNSTREAM_CODES = ("DNS_UNREACHABLE_FROM_SITE", "DNS_TIMEOUTS", "DHCP_TRANSACTIONS_STOPPED")
 SCOPE_REPORT = {"everyone": "All users at the affected site are impacted.", "some": "Only some users are impacted.",
                 "single": "A single user is impacted."}
 CAPABILITIES = [
     "Talk through the incident and explain the diagnosis and its evidence (E1, E2, ...) without re-running anything",
     "Run targeted read-only checks when asked: routing, BGP/OSPF adjacencies, interfaces, packet loss, interface errors, logs, "
     "reachability, firewall logs, DHCP/DNS, topology and dependencies",
+    "Read network intelligence: health scores, configuration drift, traffic flows, hop-by-hop packet journeys and capacity "
+    "forecasts (computed in code from simulated telemetry)",
     f"Run a full diagnosis when asked: at most {MAX_TOOL_CALLS} read-only tool calls, correlated into a hypothesis with confidence and evidence",
     "Search the troubleshooting playbooks and site runbooks (guidance, not evidence)",
     "Never change devices or incidents: confirming, escalating, saving, closing and remediation are human actions",
@@ -100,6 +153,42 @@ HUMAN_ACTIONS: dict[str, tuple[str, Permission, str]] = {
 }
 SAVEABLE = {"acknowledged", "investigating", "diagnosed", "escalated", "monitoring"}
 StepStatus = Literal["executed", "failed", "rejected", "duplicate", "cancelled"]
+# How deep a reply goes. Brief is the default; "why" questions get the reasons; "show the evidence" gets the technical list.
+DEEPER = re.compile(r"\bwhy\b|how (?:do|did|can) you (?:know|tell)|what makes you|reasoning|justify|walk me through|in detail|more detail|"
+                    r"elaborate|tell me more|based on what|explain (?:it |that |this )?(?:more|further|properly)", re.IGNORECASE)
+SHOW_EVIDENCE = re.compile(r"\b(?:show|list|give|see)(?: me)? (?:the |all (?:the )?)?(?:evidence|raw)|\ball (?:the )?evidence\b|"
+                           r"\bevidence list\b|\btechnical\b", re.IGNORECASE)
+ATTACK_QUESTION = re.compile(r"\b(?:attack|breach|compromis\w*|intrusion|hack\w*|malicious)\b", re.IGNORECASE)
+STEPS_WANTED = re.compile(r"\bsteps?\b|step[- ]by[- ]step|\bcommands?\b|walk me through|checklist|instructions|runbook|procedure|"
+                          r"how (?:do|should|can|would) (?:i|we)|troubleshooting (?:guide|plan)", re.IGNORECASE)
+TECHNICAL_ASK = re.compile(r"\b(?:technical|tech|raw)\b", re.IGNORECASE)
+NEXT_CHECK = re.compile(r"\bwhat (?:should|do|can|would) (?:i|we) (?:check|look at|try|do)\b|\bwhat(?:'s| is) next\b|\bcheck next\b|"
+                        r"\blook at next\b|\bnext check\b", re.IGNORECASE)
+SHORTER = re.compile(r"\b(?:short(?:er|en)?|brief(?:er)?|concise|trim(?: it)?|cut it down|less wordy|tl;?dr)\b", re.IGNORECASE)
+SECURITY_ENGINES = {"threats", "traffic", "lateral"}
+# The protocol check that matches a technology users name, checked in report order. Vague wording follows the specialist rules:
+# part of a population affected points at ARP, short freezes or a new desk at spanning tree.
+NAMED_ENGINE = [(re.compile(p, re.IGNORECASE), engine) for p, engine in (
+    (r"certificat|\btls\b|\bssl\b", "tls"), (r"\bvpn\b|tunnel|ipsec", "ipsec"), (r"wi-?fi|wireless|\bradar\b", "wireless"),
+    (r"ipv6", "ipv6"), (r"multicast|\bvideo\b", "multicast"), (r"\bbgp\b", "bgp"), (r"\bospf\b", "ospf"),
+    (r"\bloop\b|broadcast storm|spanning|freez|new desk", "stp"), (r"\bmtu\b|fragment", "mtu"), (r"\bqos\b|voice|choppy", "qos"),
+    (r"\bnat\b|translation", "nat"), (r"\bhalf\b|some (?:users|desktops)|partial", "arp"))]
+BROAD_TOPICS = {"logs", "availability", "routing", "adjacency", "interfaces"}
+MAX_BROAD_CALLS = 4
+OFFER_LOOKBACK = 4
+NUMBER_WORD = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+TOOL_PLAIN = {"check_network_reachability": "a reachability check", "get_firewall_logs": "the firewall logs",
+              "analyze_packet_loss": "the packet-loss analysis", "analyze_interface_errors": "the interface error analysis",
+              "get_interface_stats": "the interface counters", "get_routing_state": "the routing table",
+              "analyze_routing_adjacency": "the routing neighbour check", "check_device_availability": "an availability check",
+              "get_dhcp_dns_status": "the DHCP and DNS records", "get_device_logs": "the device logs",
+              "analyze_path_health": "the path health check", "get_event_timeline": "the event timeline",
+              "get_change_history": "the change history", "analyze_network_dependencies": "the dependency map",
+              "get_topology": "the topology", "analyze_protocol": "a protocol check"}
+ENGINE_FOCUS = {"bgp": "the BGP routes", "ospf": "the OSPF database", "stp": "spanning tree", "arp": "the ARP tables",
+                "vlan": "the trunks and VLANs", "nat": "NAT", "ipsec": "the VPN tunnels", "tcp": "TCP retransmissions", "mtu": "MTU",
+                "qos": "QoS", "ipv6": "IPv6", "wireless": "the Wi-Fi", "multicast": "multicast", "tls": "the certificates",
+                "threats": "the security alerts", "traffic": "the traffic records", "lateral": "the login records"}
 
 
 def can(principal: Principal, permission: Permission) -> bool:
@@ -133,8 +222,26 @@ def evidence_fact(item: EvidenceItem, role: str | None = None) -> dict[str, Any]
     return fact
 
 
+SERVICE_WORDS = {"application": r"erp|crm|sap|applications?|apps?|portal|intranet", "internet": r"internet|websites?|web",
+                 "dns": r"dns", "dhcp": r"dhcp", "authentication": r"802\.1x|sign-?in|log-?in|radius", "email": r"e-?mail"}
+
+
+def unaffected(service: str, text: str) -> bool:
+    """True when the report says the service is fine ("ERP is fine", "ERP works"), so drafts don't list it as affected."""
+    words = SERVICE_WORDS.get(service)
+    return bool(words and re.search(rf"\b(?:{words})\b(?: (?:is|are|seems?|looks?|still))? (?:fine|ok|okay|works?|working|normal|"
+                                    rf"unaffected|not affected)\b", text, re.IGNORECASE))
+
+
 def bullet(item: EvidenceItem) -> str:
-    return f"- **{item.evidence_id}**: {item.summary}"
+    """One evidence line. Inferred findings are labelled so a hypothesis never reads as a measured fact."""
+    label = " (inferred, not measured)" if item.evidence_type == EvidenceType.INFERRED_FINDING else ""
+    return f"- **{item.evidence_id}**{label}: {item.summary}"
+
+
+def lower_first(text: str) -> str:
+    """Lower-cases a sentence's first letter for use mid-sentence, leaving identifiers (SIN-RTR-01, E1, BGP) alone."""
+    return text[:1].lower() + text[1:] if len(text) > 1 and text[0].isupper() and text[1].islower() else text
 
 
 def step_status(record: ToolCallRecord) -> StepStatus:
@@ -158,6 +265,10 @@ class Outcome:
     knowledge_searches: int = 0
     use_model: bool = True
     footer: str | None = None
+    details: str | None = None
+    attachments: list[Attachment] = field(default_factory=list)
+    result_by: Literal["ai_agent", "rule_based", "rule_based_fallback", "none"] = "none"
+    level: Literal["brief", "detail", "technical"] = "brief"
 
 
 @dataclass
@@ -258,6 +369,7 @@ class ConversationService:
         self.store = store or ConversationStore()
         self.index = index or topology_index()
         self.composer = ReplyComposer(services.agent, set(self.index.devices))
+        self.namer = Namer(self.index)
 
     @property
     def model_available(self) -> bool:
@@ -280,7 +392,7 @@ class ConversationService:
         elif scenario_id:
             context = ConversationContext(scenario_id=scenario_id)
             title = f"Scenario {scenario_id}"
-        if context.scenario_id and context.scenario_id not in list_scenario_ids():
+        if context.scenario_id and not scenario_exists(context.scenario_id):
             raise AppError(f"Unknown scenario '{context.scenario_id}'", code="NOT_FOUND", status_code=404)
         return self.store.create(principal.subject, context, mode, title)
 
@@ -292,6 +404,12 @@ class ConversationService:
                                             site_ids=old.site_ids if old.incident_id else [])
         self.emit_state(state, "context.reset", {"context": state.context.model_dump(mode="json")})
         return state.context
+
+    @staticmethod
+    def adopt_evidence(state: ConversationState, investigation: Investigation) -> None:
+        """Advances the conversation's evidence counter so the next investigation numbers its evidence after this one."""
+        numbers = [int(item.evidence_id[1:]) for item in investigation.evidence if item.evidence_id[1:].isdigit()]
+        state.evidence_seq = max([state.evidence_seq, *numbers])
 
     def emit_state(self, state: ConversationState, event: str, data: dict[str, Any], turn_id: str | None = None) -> None:
         self.store.emit(state, event, turn_id, data)
@@ -403,6 +521,16 @@ class ConversationService:
             return result
         if action.kind == "status":
             return IntentResult(intent=Intent.STATUS, confidence="high", source="quick_action")
+        if action.kind == "multi_agent":
+            return IntentResult(intent=Intent.MULTI_AGENT, confidence="high", source="quick_action", rerun=True)
+        if action.kind == "protocol":
+            calls = [PlannedCall(tool=c.tool, arguments=dict(c.arguments), reason="Approved by you") for c in action.calls[:6]
+                     if c.tool == "analyze_protocol"]
+            return IntentResult(intent=Intent.PROTOCOL_CHECK, confidence="high", source="quick_action", planned_calls=calls,
+                                protocols=[c.arguments.get("protocol", "") for c in calls], rerun=True)
+        if action.kind == "run_plan":
+            calls = [PlannedCall(tool=c.tool, arguments=dict(c.arguments), reason="Approved by you") for c in action.calls[:4]]
+            return IntentResult(intent=Intent.TARGETED_DIAGNOSTIC, confidence="high", source="quick_action", planned_calls=calls, rerun=True)
         call = PlannedCall(tool=action.tool or "", arguments=dict(action.arguments or {}), reason="Requested with a quick action")
         return IntentResult(intent=Intent.TARGETED_DIAGNOSTIC, confidence="high", source="quick_action", planned_calls=[call], rerun=True)
 
@@ -410,8 +538,13 @@ class ConversationService:
         context = turn.state.context
         intent = turn.intent
         entities = intent.entities
-        describes = intent.intent in (Intent.SYMPTOM_REPORT, Intent.CLARIFICATION, Intent.FULL_DIAGNOSIS)
+        describes = intent.intent in (Intent.SYMPTOM_REPORT, Intent.CLARIFICATION, Intent.FULL_DIAGNOSIS) or (
+            intent.intent == Intent.TARGETED_DIAGNOSTIC and bool(USER_REPORT.search(turn.user.content)))
+        if entities.unaffected_site_ids and intent.intent not in (Intent.KNOWLEDGE, Intent.EVIDENCE_EXPLANATION):
+            context.unaffected_site_ids = list(dict.fromkeys(context.unaffected_site_ids + entities.unaffected_site_ids))[:5]
+            context.site_ids = [site for site in context.site_ids if site not in entities.unaffected_site_ids]
         if describes:
+            context.unaffected_site_ids = [site for site in context.unaffected_site_ids if site not in entities.site_ids]
             context.site_ids = list(dict.fromkeys(context.site_ids + entities.site_ids))[:5]
             context.device_ids = list(dict.fromkeys(context.device_ids + entities.device_ids))[:10]
             context.services = list(dict.fromkeys(context.services + entities.services))[:5]
@@ -426,7 +559,7 @@ class ConversationService:
             context.focus_device_id = entities.device_ids[0]
         if intent.intent not in (Intent.CONFIRMATION, Intent.DECLINE, Intent.GREETING, Intent.GENERAL, Intent.STATUS,
                                  Intent.EVIDENCE_EXPLANATION, Intent.CAPABILITIES, Intent.KNOWLEDGE, Intent.INCIDENT_QUERY,
-                                 Intent.CANCELLATION):
+                                 Intent.CANCELLATION, Intent.HYPOTHESIS_CHECK, Intent.CLARIFICATION):
             context.pending_action = None
         if intent.intent in (Intent.FULL_DIAGNOSIS, Intent.TARGETED_DIAGNOSTIC, Intent.HUMAN_ACTION, Intent.CONFIRMATION,
                              Intent.DECLINE):
@@ -445,6 +578,11 @@ class ConversationService:
         self.emit(turn, "assistant.typing", {"state": "start", "message_id": message_id})
         history = [(m.role, m.content) for m in state.messages[:-1] if m.status == "completed"]
         issues: list[str] = []
+        outcome.facts.setdefault("detail_level", outcome.level)
+        # Evidence-grounded validation applies to every reply, including the deterministic ones.
+        template_issues = grounding_issues(outcome.template, outcome.facts, set(self.index.devices)) if outcome.facts.get("kind") != "error" else []
+        if template_issues:
+            logger.warning("Template reply failed validation: %s", "; ".join(template_issues))
         if outcome.use_model and outcome.status != "cancelled" and self.composer.available:
             try:
                 text, composer, issues = await self.composer.compose(history, turn.user.content, outcome.facts, outcome.template,
@@ -461,11 +599,27 @@ class ConversationService:
             text = f"{text}\n\n{outcome.footer}"
         self.emit(turn, "assistant.typing", {"state": "stop", "message_id": message_id})
         investigation = outcome.investigation
+        model_configured = self.composer.available
+        result_by = outcome.result_by
+        if investigation is not None and result_by == "none":
+            result_by = ("rule_based_fallback" if investigation.fallback_used else "ai_agent" if investigation.mode == "agent"
+                         else "rule_based")
+        note = None
+        if result_by == "rule_based_fallback":
+            note = "The AI model didn't finish this diagnosis, so the rule-based engine produced the result."
+        elif issues and model_configured:
+            rejected = issues[0].removeprefix("Model reply rejected: ")
+            note = ("I couldn't reach the AI service, so the rule-based composer wrote this reply instead."
+                    if rejected == issues[0] else f"The AI model's reply was not used ({rejected}), so this is the rule-based version.")
+        elif not model_configured:
+            note = "No AI model is configured; replies and results are rule-based."
+        generated = GeneratedBy(reply=composer, result=result_by, model_configured=model_configured, note=note)
         message = Message(message_id=message_id, turn_id=turn.handle.turn_id, role="assistant", content=text, created_at=now(),
                           intent=intent.intent, status=outcome.status, composer=composer,
                           investigation_id=investigation.investigation_id if investigation else None,
-                          evidence_refs=outcome.evidence[:20], suggested_actions=outcome.actions[:6], clarification=outcome.clarification,
-                          human_confirmations=outcome.confirmations)
+                          evidence_refs=[self.plain_ref(ref) for ref in outcome.evidence[:20]], suggested_actions=outcome.actions[:6], clarification=outcome.clarification,
+                          human_confirmations=outcome.confirmations, details=outcome.details, attachments=outcome.attachments[:4],
+                          generated_by=generated)
         state.add_message(message)
         self.emit(turn, "assistant.message", {"message": message.model_dump(mode="json"), "replaced": bool(streamed) and composer != "model",
                                               "composer_issues": issues})
@@ -479,7 +633,7 @@ class ConversationService:
             budget_used=investigation.budget_used if investigation else 0,
             budget_limit=investigation.budget_limit if investigation else MAX_TOOL_CALLS, tools=steps, mode=mode,
             model=investigation.model if investigation else None, composer=composer,
-            fallback_used=investigation.fallback_used if investigation else False,
+            fallback_used=investigation.fallback_used if investigation else False, composer_issues=(issues + template_issues)[:5],
         )
         result = TurnResult(
             conversation_id=state.conversation_id, turn_id=turn.handle.turn_id,
@@ -489,7 +643,11 @@ class ConversationService:
             investigation_id=investigation.investigation_id if investigation else None, execution=execution,
             evidence_references=message.evidence_refs, suggested_actions=message.suggested_actions,
             human_confirmations=message.human_confirmations, context=state.context.model_copy(deep=True),
+            details=message.details, attachments=message.attachments, generated_by=generated,
         )
+        if outcome.status == "completed":
+            state.context.last_intent = intent.intent.value
+        self.store.save(state)
         self.emit(turn, "turn.completed", {"status": outcome.status, "result": result.model_dump(mode="json")})
         return result
 
@@ -519,6 +677,7 @@ class ConversationService:
                                    for s in investigation.steps]
             records = list(observer.records)
             investigation.evidence = build_catalog(records)
+            self.adopt_evidence(turn.state, investigation)
             investigation.status = "cancelled"
             investigation.finished_at = now()
             investigation.duration_ms = int((investigation.finished_at - investigation.started_at).total_seconds() * 1000)
@@ -576,6 +735,8 @@ class ConversationService:
                                      "scope": context.scope, "timeframe": context.timeframe, "focus_device": context.focus_device_id},
             "user_can": {"run_diagnostics": can(turn.principal, Permission.RUN_DIAGNOSTICS),
                          "confirm_classification": can(turn.principal, Permission.CONFIRM_CLASSIFICATION)},
+            "investigation_ids": list(turn.state.investigations)[-10:],
+            "confirmed_by_person": bool(turn.incident and turn.incident.classification.confirmed_fault_domain),
         }
         facts.update(extra)
         brief = facts["incident"]
@@ -604,53 +765,549 @@ class ConversationService:
         turn.state.context.pending_action = PendingAction(kind="full_diagnosis", proposed_at=now())
         return [act("full_diagnosis", "Run full diagnosis", tools=True), reply("Not yet")]
 
+    # ---------- plain-language helpers ----------
+
+    def plain_ref(self, ref: EvidenceReference) -> EvidenceReference:
+        """Adds a plain-words version of the summary for tooltips. The audit summary itself is never changed."""
+        if ref.plain:
+            return ref
+        try:
+            item = SimpleNamespace(code=ref.code, summary=ref.summary, device_id=ref.device_id, evidence_id=ref.evidence_id,
+                                   evidence_type=EvidenceType(ref.evidence_type))
+            return ref.model_copy(update={"plain": sentence(self.namer.clause(item))})
+        except (ValueError, KeyError):
+            return ref
+
+    def offices(self, turn: Turn) -> list[str]:
+        return list(turn.incident.site_ids if turn.incident else turn.state.context.site_ids)
+
+    def is_confirmed(self, turn: Turn, diagnosis: Diagnosis | None) -> bool:
+        confirmed = turn.incident.classification.confirmed_fault_domain if turn.incident else None
+        return bool(diagnosis is not None and confirmed is not None and confirmed == diagnosis.fault.fault_domain)
+
+    @staticmethod
+    def open_case(diagnosis: Diagnosis | None) -> bool:
+        return diagnosis is None or diagnosis.fault.fault_domain.value == "unknown" \
+            or diagnosis.confidence.level.value == "insufficient_evidence"
+
+    def reported_problem(self, turn: Turn) -> str:
+        incident = turn.incident
+        if incident is not None:
+            return problem_of(incident.title, incident.symptoms, incident.description)
+        context = turn.state.context
+        return problem_of(" ".join(context.notes[-2:]), context.symptoms)
+
+    def security_mentions(self, turn: Turn) -> list[str]:
+        incident = turn.incident
+        if incident is not None:
+            return self.namer.security_mentions(incident.title, incident.description, incident.symptoms)
+        context = turn.state.context
+        return self.namer.security_mentions(" ".join(context.notes[-3:]), "", context.symptoms)
+
+    @staticmethod
+    def security_check(turn: Turn) -> Investigation | None:
+        """The latest protocol check in this conversation that looked at threats, suspicious traffic or lateral movement."""
+        return next((i for i in reversed(turn.state.investigations.values()) if i.kind == "protocol_check" and i.protocol
+                     and SECURITY_ENGINES & {e.get("engine") for e in i.protocol.get("engines", [])}), None)
+
+    def security_line(self, turn: Turn) -> str | None:
+        """Security activity in the report is never dropped from an explanation. Until a security check runs it stays open."""
+        mentions = self.security_mentions(turn)
+        if not mentions:
+            return None
+        checked = self.security_check(turn)
+        if checked is not None:
+            return f"On the security side, I ran the checks earlier. {sentence(checked.protocol['headline'])}"
+        verb, pronoun = ("aren't", "they're") if len(mentions) > 1 else ("isn't", "it's")
+        return (f"{capital(join(mentions))} in the report {verb} covered by any evidence yet, so {pronoun} neither confirmed nor "
+                "ruled out.")
+
+    def with_security(self, turn: Turn, facts: dict[str, Any], parts: list[str]) -> list[str]:
+        """Appends the security line and records it, so a model rewrite that drops it is rejected."""
+        security = self.security_line(turn)
+        if security:
+            parts.append(security)
+            facts["warnings"] = [security]
+        return parts
+
+    def short_state(self, turn: Turn, diagnosis: Diagnosis | None) -> str:
+        if diagnosis is None:
+            return "Nobody has run a diagnosis yet."
+        if self.open_case(diagnosis):
+            return "No cause found yet."
+        what = FAULT_PLAIN.get(diagnosis.fault.fault_domain.value, "a fault")
+        if self.is_confirmed(turn, diagnosis):
+            return f"The cause is confirmed as {what}."
+        return f"My best lead is {what}, not confirmed yet."
+
+    def diagnosis_brief(self, turn: Turn, diagnosis: Diagnosis, items: list[EvidenceItem],
+                        short: bool = False) -> tuple[str, list[EvidenceItem]]:
+        """Where the diagnosis stands in two or three sentences: the verdict, the main reason, and what is still open."""
+        namer, fault, offices = self.namer, diagnosis.fault, self.offices(turn)
+        by_id = {item.evidence_id: item for item in items}
+        supporting = [by_id[e] for e in fault.supporting_evidence_ids if e in by_id]
+        verdict = namer.verdict(diagnosis, self.is_confirmed(turn, diagnosis))
+        if supporting:
+            clauses = [text for text, _ in namer.grouped(supporting, offices=offices)][:2]
+            parts = [verdict, f"The main sign is that {clauses[0]}" + (f", and {clauses[1]}" if len(clauses) > 1 else "") + "."]
+            if fault.contradictory_evidence_ids:
+                parts.append("One piece of evidence doesn't fit, so treat it as provisional.")
+            return " ".join(parts), supporting[:4]
+        what = self.reported_problem(turn)
+        healthy = [item for item in items if item.code in HEALTHY]
+        odd = [item for item in items if item.code not in HEALTHY]
+        fine = [self.untimed(text) for text, _ in namer.grouped(healthy, offices=offices)]
+        strange = [self.untimed(text) for text, _ in namer.grouped(odd, offices=offices)]
+        if short or not (fine or strange):
+            parts = [verdict, f"Nothing in the evidence so far explains {what}."]
+        else:
+            parts = [f"{verdict[:-1]}, though {fine[0]}." if fine and verdict.startswith("I haven't") else verdict]
+            if fine and not verdict.startswith("I haven't"):
+                parts.append(sentence(fine[0]))
+            if len(strange) == 1:
+                parts.append(f"The only odd thing is that {strange[0]}, and that isn't enough to explain {what}.")
+            elif strange:
+                parts.append(f"I did find that {strange[0]}, but nothing I've collected explains {what}.")
+            else:
+                parts.append(f"Nothing I've collected explains {what}.")
+        return " ".join(parts), (healthy + odd)[:6]
+
+    @staticmethod
+    def untimed(text: str) -> str:
+        return re.sub(r" (?:at|between) \d{2}:\d{2}(?: and \d{2}:\d{2})? UTC$", "", text)
+
+    def diagnosis_reasons(self, turn: Turn, diagnosis: Diagnosis, items: list[EvidenceItem]) -> tuple[str, list[EvidenceItem]]:
+        """The "why" answer: each piece of evidence that matters, in plain words, with its id and what it means."""
+        namer, fault, offices = self.namer, diagnosis.fault, self.offices(turn)
+        by_id = {item.evidence_id: item for item in items}
+        supporting = [by_id[e] for e in fault.supporting_evidence_ids if e in by_id]
+        if supporting:
+            head = namer.verdict(diagnosis, self.is_confirmed(turn, diagnosis), with_ids=True)
+            shown = namer.grouped(supporting, True, offices)[:2]
+            against = [by_id[e] for e in fault.contradictory_evidence_ids if e in by_id]
+            unfit = namer.grouped(against, True, offices)[:1]
+            lines = [head, "Here's what points to it:"] + [f"- {capital(text)} ({ids_text(ids)})." for text, ids in shown]
+            lines += [f"- {capital(text)} ({ids_text(ids)}). This one doesn't fit, which is why confidence isn't higher."
+                      for text, ids in unfit]
+            cited_ids = [e for _, ids in shown + unfit for e in ids]
+            inferred = [e for e in cited_ids if by_id[e].evidence_type == EvidenceType.INFERRED_FINDING]
+            if inferred:
+                lines.append(f"{ids_text(inferred)} {'is' if len(inferred) == 1 else 'are'} inferred from other data rather than "
+                             "measured directly.")
+            return first_mention("\n".join(lines)), [by_id[e] for e in cited_ids]
+        chosen = items[:8]
+        lines = ["I haven't found the cause yet. Here's what I have:"]
+        lines += [f"- {capital(text)} ({ids_text(ids)}). {namer.meaning(by_id[ids[0]], diagnosis)}"
+                  for text, ids in namer.grouped(chosen, True, offices)[:5]]
+        lines.append(f"None of it explains {self.reported_problem(turn)}.")
+        return first_mention("\n".join(lines)), chosen
+
+    def evidence_listing(self, turn: Turn, diagnosis: Diagnosis, items: list[EvidenceItem]) -> str:
+        fault = diagnosis.fault
+        state = "confirmed" if self.is_confirmed(turn, diagnosis) else "not confirmed"
+        head = (f"**{fault.root_cause}** ({FAULT_LABEL.get(fault.fault_domain.value)}, "
+                f"{diagnosis.confidence.level.value.replace('_', ' ')} confidence, {state}).")
+        listed = "\n".join(f"{bullet(item)} ({TOOL_LABEL.get(item.tool, item.tool)}, {item.call_id})" for item in items[:12])
+        more = f"\n{len(items) - 12} more items are in the evidence tab." if len(items) > 12 else ""
+        return f"{head}\n\nEvidence:\n{listed}{more}"
+
+    def findings_brief(self, turn: Turn, items: list[EvidenceItem], level: str) -> tuple[str, list[EvidenceItem]]:
+        groups = self.namer.grouped(items[:8], with_ids=level != "brief", offices=self.offices(turn))
+        if level == "brief":
+            more = f" I also found that {groups[1][0]}." if len(groups) > 1 else ""
+            return f"There's no diagnosis yet, only targeted checks. {sentence(groups[0][0])}{more}", items[:5]
+        lines = ["There's no diagnosis yet. Here's what the targeted checks found:"]
+        lines += [f"- {capital(text)} ({ids_text(ids)})." for text, ids in groups[:6]]
+        return "\n".join(lines), items[:8]
+
+    def diagnosis_details(self, turn: Turn, diagnosis: Diagnosis | None, items: list[EvidenceItem], source: str,
+                          investigation_id: str | None) -> str:
+        """The technical version behind "Show details": hypothesis, raw evidence lines, reasoning and confidence."""
+        if diagnosis is None:
+            return f"Here's the evidence from {source}:\n" + "\n".join(bullet(item) for item in items[:8])
+        fault = diagnosis.fault
+        by_id = {item.evidence_id: item for item in items}
+        chosen = [by_id[e] for e in fault.supporting_evidence_ids if e in by_id][:5] or items[:5]
+        reasoning = self.reasoning_for(turn, investigation_id)
+        extra = ""
+        if reasoning is not None:
+            why = "\n".join(f"- {line}" for line in reasoning.explanation.why[:3])
+            alternatives = "\n".join(f"- {line}" for line in reasoning.explanation.alternatives)
+            extra = (f"\n\nHow it fits together:\n{why}" if why else "") + (
+                f"\n\nWhy not the alternatives:\n{alternatives}" if alternatives else "") + f"\n\n{reasoning.explanation.uncertainty}"
+        return (f"The hypothesis is **{fault.root_cause}** ({FAULT_LABEL.get(fault.fault_domain.value)}, "
+                f"{diagnosis.confidence.level.value.replace('_', ' ')} confidence). {fault.reasoning}\n\n"
+                + "\n".join(bullet(item) for item in chosen) + extra
+                + f"\n\n{diagnosis.confidence.explanation} This comes from {source}; I didn't re-run anything.")
+
+    def explain_one(self, item: EvidenceItem, diagnosis: Diagnosis | None) -> str:
+        namer = self.namer
+        if item.evidence_type == EvidenceType.RECORD:
+            when = f" at {item.timestamp:%H:%M} UTC" if item.timestamp else ""
+            message = re.sub(r"^\[\w+\]\s*", "", item.summary).rstrip(".")
+            return (f"**{item.evidence_id}** is a log line from {namer.device(item.device_id)}{when}. It reads \"{message}\". "
+                    f"{namer.meaning(item, diagnosis)}")
+        tool = TOOL_PLAIN.get(item.tool, f"the {TOOL_LABEL.get(item.tool, item.tool).lower()}")
+        where = ""
+        if item.device_id:
+            where = (f" run from {namer.device(item.device_id)}" if item.tool == "check_network_reachability"
+                     else f" on {namer.device(item.device_id)}")
+        supporting = diagnosis.fault.supporting_evidence_ids if diagnosis else []
+        inferred = (" It's inferred from other data, not measured directly."
+                    if item.evidence_type == EvidenceType.INFERRED_FINDING and item.evidence_id not in supporting else "")
+        return (f"**{item.evidence_id}** comes from {tool}{where}. It shows that {namer.clause(item)}.{inferred} "
+                f"{namer.meaning(item, diagnosis)}")
+
+    def confirmed_answer(self, turn: Turn, diagnosis: Diagnosis | None, facts: dict[str, Any]) -> tuple[str, list[SuggestedAction]]:
+        classification = turn.incident.classification if turn.incident else None
+        if classification is not None and classification.confirmed_fault_domain is not None:
+            who = classification.confirmed_by.actor_id if classification.confirmed_by else "Someone"
+            return f"Yes. {who} confirmed the fault domain as {FAULT_LABEL.get(classification.confirmed_fault_domain.value)}.", []
+        if diagnosis is None:
+            return "No. Nobody has run a diagnosis yet, so there's nothing to confirm.", self.propose_diagnosis(turn)
+        if self.open_case(diagnosis):
+            parts = self.with_security(turn, facts, ["No. The diagnosis hasn't found a cause, so there's nothing to confirm yet."])
+            return " ".join(parts), [reply("What should I check next?")]
+        level = diagnosis.confidence.level.value.replace("_", " ")
+        return (f"No. The diagnosis says {self.namer.cause(diagnosis.fault.root_cause)}, at {level} confidence, but nobody has "
+                "confirmed it. Someone with the right role can do that with Review and confirm after checking it."), \
+            [reply("Why do you think that?")]
+
+    def attack_answer(self, turn: Turn) -> str:
+        checked = self.security_check(turn)
+        if checked is not None:
+            return f"Not as far as I can tell. {sentence(checked.protocol['headline'])}"
+        mentions = self.security_mentions(turn)
+        if mentions:
+            verb, pronoun = ("aren't", "they're") if len(mentions) > 1 else ("isn't", "it's")
+            return (f"No, nothing confirms an attack. {capital(join(mentions))} in the report {verb} covered by any evidence yet, "
+                    f"so {pronoun} neither confirmed nor ruled out.")
+        return "No, nothing I've collected points to an attack."
+
+    def suggested_engines(self, turn: Turn) -> list[str]:
+        """Protocol checks that fit what users report, when the core diagnosis found nothing. The primary symptom picks one;
+        security activity in the report adds the threat check. Checks already run here are skipped."""
+        incident, context = turn.incident, turn.state.context
+        primary = (f"{incident.title.split(';')[0]} {(incident.symptoms or [''])[0]}" if incident
+                   else " ".join(context.notes[-1:] + context.symptoms[:1]))
+        report = [incident.title, *incident.symptoms] if incident else context.notes[-2:] + context.symptoms
+        named = next((engine for text in report for pattern, engine in NAMED_ENGINE if pattern.search(text)), None)
+        engines = [named] if named else [e for e in engines_for_symptoms(primary) if e in PROTOCOL_ENGINES
+                                         and e not in SECURITY_ENGINES][:1]
+        if self.security_mentions(turn):
+            engines.append("threats")
+        done = {e.get("engine") for i in turn.state.investigations.values() if i.kind == "protocol_check" and i.protocol
+                for e in i.protocol.get("engines", [])}
+        return [e for e in dict.fromkeys(engines) if e not in done][:3]
+
+    def focus_devices(self, turn: Turn) -> list[str]:
+        """Devices that matter most for this incident: the fault's devices, devices with odd evidence, then each site's router."""
+        diagnosis, _, _ = self.current_diagnosis(turn)
+        devices: list[str | None] = list(diagnosis.fault.device_ids) if diagnosis else []
+        if diagnosis is not None:
+            devices += [item.device_id for item in diagnosis.evidence if item.code not in HEALTHY]
+        devices += [self.index.site_device(site, DeviceRole.WAN_EDGE) for site in self.offices(turn)]
+        if diagnosis is not None:
+            devices += [item.device_id for item in diagnosis.evidence]
+        return [d for d in dict.fromkeys(devices) if d and d in self.index.devices]
+
+    @staticmethod
+    def pending_from(action: SuggestedAction) -> PendingAction | None:
+        params = action.params or {}
+        calls = [PlannedCall(tool=c["tool"], arguments=dict(c.get("arguments") or {}), reason="Offered earlier")
+                 for c in params.get("calls", []) if isinstance(c, dict) and c.get("tool")]
+        if action.kind == "run_plan" and calls:
+            return PendingAction(kind="plan", calls=calls[:4], proposed_at=now())
+        if action.kind == "protocol" and calls:
+            return PendingAction(kind="protocol", calls=calls[:6], proposed_at=now())
+        if action.kind == "targeted_check" and params.get("tool"):
+            return PendingAction(kind="targeted_check", proposed_at=now(), calls=[
+                PlannedCall(tool=params["tool"], arguments=dict(params.get("arguments") or {}), reason="Offered earlier")])
+        if action.kind in ("full_diagnosis", "multi_agent"):
+            return PendingAction(kind=action.kind, proposed_at=now())
+        return None
+
+    def offer_text(self, pending: PendingAction) -> str:
+        if pending.kind == "full_diagnosis":
+            return "the full read-only diagnosis I offered earlier"
+        if pending.kind == "multi_agent":
+            return "the specialist review I offered earlier"
+        if pending.kind == "protocol":
+            engines = [c.arguments.get("protocol", "") for c in pending.calls]
+            return f"the read-only check{'s' if len(engines) > 1 else ''} of {join(ENGINE_FOCUS.get(e, e) for e in engines)} I offered earlier"
+        labels = list(dict.fromkeys(TOOL_LABEL.get(c.tool, c.tool).lower() for c in pending.calls))
+        devices = list(dict.fromkeys(c.arguments.get("device_id") for c in pending.calls if c.arguments.get("device_id")))
+        where = f" on {self.namer.device(devices[0])}" if len(devices) == 1 else f" on {len(devices)} devices" if devices else ""
+        return f"the read-only check{'s' if len(pending.calls) > 1 else ''} I offered earlier, {join(labels)}{where}"
+
+    def reoffer(self, turn: Turn) -> Outcome:
+        """"Go ahead" with nothing waiting. A recent offer is asked about again by name; nothing runs on this turn, and an
+        offer the user declined or cancelled is never brought back."""
+        offer = None
+        seen = 0
+        for message in reversed(turn.state.messages[:-1]):
+            if message.role != "assistant":
+                continue
+            seen += 1
+            if seen > OFFER_LOOKBACK or message.intent in (Intent.DECLINE, Intent.CANCELLATION):
+                break
+            offer = next((a for a in message.suggested_actions if a.executes_tools and a.allowed), None)
+            if offer is not None:
+                break
+        pending = self.pending_from(offer) if offer is not None and self.can_diagnose(turn) else None
+        if pending is None:
+            return Outcome(template="There's nothing waiting for a go-ahead right now. What would you like me to do?",
+                           facts=self.facts(turn, "nothing_pending"), use_model=False)
+        turn.state.context.pending_action = pending
+        return Outcome(template=f"Do you mean {self.offer_text(pending)}? We've talked about other things since, so I'd rather check "
+                                "than run something you didn't mean.",
+                       facts=self.facts(turn, "offer_repeated", proposal=offer.label), use_model=False,
+                       actions=[offer, reply("No thanks")])
+
+    def propose_broad(self, turn: Turn) -> Outcome:
+        """"Check every log": never run as asked. The devices that matter most are offered as a bounded, approved plan."""
+        topic = (turn.intent.topics or ["logs"])[0]
+        tool = TOPIC_TOOL.get(topic)
+        devices = self.focus_devices(turn)[:MAX_BROAD_CALLS] if topic in BROAD_TOPICS else []
+        if tool is None or not devices:
+            return Outcome(template="Checking everything at once would be a lot, and most of it wouldn't relate to this incident. "
+                                    "Which site or device should I start with?", facts=self.facts(turn, "broad_request"), use_model=False)
+        calls = [PlannedCall(tool=tool, arguments={"device_id": d}, reason=f"Read the {TOPIC_LABEL[topic]} of {d}") for d in devices]
+        turn.state.context.pending_action = PendingAction(kind="plan", calls=calls, proposed_at=now())
+        count = NUMBER_WORD.get(len(devices), str(len(devices)))
+        what = "every log on every device" if topic == "logs" else f"the {TOPIC_LABEL[topic]} of every device"
+        label = f"Read {TOPIC_LABEL[topic]} on {len(devices)} device{'s' if len(devices) != 1 else ''}"
+        template = (f"Reading {what} would be a lot, and most of it has nothing to do with this incident. I can read the "
+                    f"{TOPIC_LABEL[topic]} on the {count} devices that matter most here, {join(self.namer.device(d) for d in devices)}. "
+                    f"That's {count} read-only call{'s' if len(devices) != 1 else ''}. Go ahead?")
+        return Outcome(template=template, facts=self.facts(turn, "broad_request", proposal=label), use_model=False,
+                       actions=[act("run_plan", label, {"calls": [{"tool": c.tool, "arguments": c.arguments} for c in calls]}, tools=True),
+                                reply("No thanks")])
+
+    def grounds(self, turn: Turn) -> assist.Grounds:
+        """What troubleshooting may rest on: the diagnosis and its state, its evidence, targeted checks run here, and the report."""
+        incident, context = turn.incident, turn.state.context
+        diagnosis, _, _ = self.current_diagnosis(turn)
+        evidence = list(diagnosis.evidence) if diagnosis else []
+        seen = {item.evidence_id for item in evidence}
+        for investigation in turn.state.investigations.values():
+            evidence += [item for item in investigation.evidence if item.evidence_id not in seen]
+            seen |= {item.evidence_id for item in investigation.evidence}
+        report = (assist.clauses(incident.title, incident.description, *incident.symptoms) if incident
+                  else assist.clauses(*context.notes[-4:], *context.symptoms))
+        sites = list(incident.site_ids if incident else context.site_ids)
+        base = dict(report=report, sites=sites, evidence=evidence)
+        confirmed = incident.classification.confirmed_fault_domain if incident else None
+        if confirmed is not None:
+            devices = list(diagnosis.fault.device_ids) if diagnosis and diagnosis.fault.fault_domain == confirmed else []
+            return assist.Grounds(status="confirmed", domain=confirmed, devices=devices, **base)
+        if self.open_case(diagnosis):
+            return assist.Grounds(status="unknown", **base)
+        by_id = {item.evidence_id: item for item in diagnosis.evidence}
+        against = [by_id[e] for e in diagnosis.fault.contradictory_evidence_ids if e in by_id]
+        return assist.Grounds(status="conflicting" if against else "suspected", domain=diagnosis.fault.fault_domain,
+                              contradicting=against, devices=list(diagnosis.fault.device_ids), **base)
+
+    def grounded(self, turn: Turn, kind: str, grounds: assist.Grounds, plan: assist.Plan | None = None,
+                 **extra: Any) -> tuple[dict[str, Any], list[EvidenceReference]]:
+        """Facts and evidence chips for a troubleshooting reply: every id the reply may cite is in the facts."""
+        facts = self.facts(turn, kind, **extra)
+        facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {item.evidence_id for item in grounds.evidence})
+        cited = set(plan.evidence_ids + [e for ids in plan.ruled_out.values() for e in ids]) if plan else set()
+        _, investigation_id, diagnosis_id = self.current_diagnosis(turn)
+        refs = [reference(item, investigation_id, diagnosis_id) for item in grounds.evidence if item.evidence_id in cited]
+        return facts, refs[:8]
+
+    def guide_lead(self, grounds: assist.Grounds, plan: assist.Plan, count: int) -> str:
+        """One or two sentences saying what the steps rest on: confirmed, likely, conflicting, or only the evidence and report."""
+        label = FAULT_LABEL.get(grounds.domain.value, grounds.domain.value) if grounds.domain else None
+        steps = f"{count} read-only steps" if count != 1 else "read-only step"
+        covered = assist.COVERS.get(grounds.domain, {grounds.domain}) if grounds.domain else set()
+        others = " The later ones follow what users report and the other evidence." \
+            if any(c.domain not in covered for c in plan.commands) else ""
+        if grounds.status == "confirmed":
+            lead = f"The cause is confirmed as {label}. {'These' if count != 1 else 'This'} {steps} check{'' if count != 1 else 's'} it.{others}"
+        elif grounds.status == "suspected":
+            lead = (f"{'These' if count != 1 else 'This'} {steps} follow{'' if count != 1 else 's'} the likely {label} fault, "
+                    f"which isn't confirmed yet.{others}")
+        elif grounds.status == "conflicting":
+            item = grounds.contradicting[0]
+            lead = (f"The evidence conflicts. It points to {label}, but {self.untimed(self.namer.clause(item))} "
+                    f"({item.evidence_id}) doesn't fit, so these {steps} check both.")
+        else:
+            lead = (f"Nothing points at a cause yet, so {'these' if count != 1 else 'this'} {steps} "
+                    f"follow{'' if count != 1 else 's'} from {self.basis(grounds, plan)}.")
+        notes = []
+        if grounds.status == "unknown" and plan.ruled_out:
+            ids = [e for site_ids in plan.ruled_out.values() for e in site_ids]
+            notes.append(f"I left out routing checks for {self.namer.sites(plan.ruled_out)} because the path from there works "
+                         f"({ids_text(ids)}).")
+        for item in plan.telemetry_gaps[:1]:
+            notes.append(f"Telemetry from {self.namer.device(item.device_id)} is missing ({item.evidence_id}), so the data can't "
+                         "show what it's doing. These checks look at it directly.")
+        return " ".join([lead] + notes)
+
+    def basis(self, grounds: assist.Grounds, plan: assist.Plan) -> str:
+        """What unknown-cause checks rest on: the evidence that looks wrong, and what users report."""
+        by_id = {item.evidence_id: item for item in grounds.evidence}
+        basis = []
+        first = by_id.get(plan.evidence_ids[0]) if "evidence" in plan.reasons and plan.evidence_ids else None
+        if first is not None:
+            basis.append(f"the evidence, mainly that {self.untimed(self.namer.clause(first))} ({first.evidence_id})")
+        if "report" in plan.reasons:
+            basis.append("what users report")
+        return join(basis) or "the evidence"
+
+    def first_step(self, turn: Turn, grounds: assist.Grounds, plan: assist.Plan, more: list[SuggestedAction]) -> Outcome:
+        first = plan.commands[0]
+        facts, refs = self.grounded(turn, "next_check", grounds, plan)
+        return Outcome(template=f"Nothing points at a cause yet. Going by {self.basis(grounds, plan)}, I'd start with "
+                                f"`{first.command}` on {self.namer.device(first.device_id)}. It checks "
+                                f"{plain_lower(first.purpose.rstrip('.'))}. Want the full step-by-step list?",
+                       facts=facts, evidence=refs, actions=more, use_model=False)
+
+    def more_evidence(self, turn: Turn, grounds: assist.Grounds) -> Outcome:
+        """No step is justified: say so, and offer the read-only collection that would help. Nothing runs here."""
+        diagnosis, _, _ = self.current_diagnosis(turn)
+        gaps = [item for item in grounds.evidence if item.code in assist.TELEMETRY_CODES]
+        why = ("the telemetry is incomplete" if gaps else
+               "the cause is unknown and nothing in the evidence or the report points at a particular device or service")
+        template = f"I can't point to specific commands yet, because {why}."
+        actions: list[SuggestedAction] = []
+        facts_extra: dict[str, Any] = {}
+        if self.can_diagnose(turn) and diagnosis is None:
+            actions = self.propose_diagnosis(turn)
+            template += " Rather than guess, I'd run a full read-only diagnosis to collect the evidence first. Want me to run it?"
+            facts_extra["proposal"] = "Run a full read-only diagnosis"
+        elif self.can_diagnose(turn) and (engines := self.suggested_engines(turn)):
+            calls = self.protocol_calls(turn, engines)
+            turn.state.context.pending_action = PendingAction(kind="protocol", calls=calls, proposed_at=now())
+            focus = join(ENGINE_FOCUS.get(e, f"the {PROTOCOL_SHORT.get(e, e)} data") for e in engines)
+            label = f"Check {focus}"
+            template += f" Rather than guess, I'd look at {focus} first. Want me to run that read-only check?"
+            actions = [self.protocol_action(label, calls), reply("No thanks")]
+            facts_extra["proposal"] = label
+        else:
+            template += " Tell me what users see, or name a device, and I'll suggest checks for it."
+        facts, _ = self.grounded(turn, "troubleshooting_needs_evidence", grounds, **facts_extra)
+        return Outcome(template=template, facts=facts, actions=actions, use_model=False)
+
+    async def next_check(self, turn: Turn) -> Outcome:
+        """What to check next, in a sentence or two. The check is offered, never run, until the user says so."""
+        context = turn.state.context
+        diagnosis, investigation_id, _ = self.current_diagnosis(turn)
+        more = [reply("Give me step-by-step troubleshooting")]
+        if diagnosis is None:
+            proposal = self.propose_diagnosis(turn)
+            if proposal:
+                return Outcome(template="Nobody has run a diagnosis yet, so I'd start there. It's read-only. Want me to run it?",
+                               facts=self.facts(turn, "next_check", proposal="Run a full read-only diagnosis"), actions=proposal,
+                               use_model=False)
+        grounds = self.grounds(turn)
+        site, device = self.guide_target(turn)
+        plan = assist.plan_checks(grounds, site, device)
+        from_evidence = bool(plan.commands) and "evidence" in plan.reasons and bool(plan.evidence_ids)
+        if self.open_case(diagnosis) and from_evidence:
+            return self.first_step(turn, grounds, plan, more)
+        if self.open_case(diagnosis) and self.can_diagnose(turn):
+            engines = self.suggested_engines(turn)
+            if engines:
+                calls = self.protocol_calls(turn, engines)
+                context.pending_action = PendingAction(kind="protocol", calls=calls, proposed_at=now())
+                focus = join(ENGINE_FOCUS.get(e, f"the {PROTOCOL_SHORT.get(e, e)} data") for e in engines)
+                both = "that check" if len(engines) == 1 else "both checks" if len(engines) == 2 else f"those {len(engines)} checks"
+                label = f"Check {focus}"
+                return Outcome(template=f"Nothing so far points at a device, so I'd look at {focus} next. I can run {both} now. "
+                                        f"{'They only read' if len(engines) > 1 else 'It only reads'} telemetry that's already been "
+                                        "collected. Go ahead?",
+                               facts=self.facts(turn, "next_check", proposal=label), use_model=False,
+                               actions=[self.protocol_action(label, calls), reply("No thanks")] + more)
+        if self.open_case(diagnosis):
+            return self.first_step(turn, grounds, plan, more) if plan.commands else self.more_evidence(turn, grounds)
+        reasoning = self.reasoning_for(turn, investigation_id)
+        domain = grounds.domain.value if grounds.domain else None
+        relevant = [step for step in reasoning.plan if domain in step.tests] if reasoning is not None else []
+        offer = None
+        if relevant and self.can_diagnose(turn):
+            step = relevant[0]
+            calls = [PlannedCall(tool=step.tool, arguments=step.arguments, reason=step.purpose)]
+            context.plan = calls
+            context.pending_action = PendingAction(kind="plan", calls=calls, proposed_at=now())
+            offer = act("run_plan", "Run 1 more check", {"calls": [{"tool": step.tool, "arguments": step.arguments}]}, tools=True)
+        elif plan.commands:
+            first = plan.commands[0]
+            facts, refs = self.grounded(turn, "next_check", grounds, plan)
+            label = FAULT_LABEL.get(domain, domain) if domain else "the evidence"
+            return Outcome(template=f"Going by the likely {label} fault, which isn't confirmed yet, I'd start with `{first.command}` on "
+                                    f"{self.namer.device(first.device_id)}. It checks {plain_lower(first.purpose.rstrip('.'))}. "
+                                    "Want the full step-by-step list?", facts=facts, evidence=refs, actions=more, use_model=False)
+        if offer is not None:
+            question = relevant[0].reason.strip().rstrip(".?")
+            return Outcome(template=f"I'd check this next. {capital(question)}? Want me to run it? It's read-only.",
+                           facts=self.facts(turn, "next_check", proposal=offer.label), actions=[offer, reply("Not yet")] + more,
+                           use_model=False)
+        checks = diagnosis.next_checks if diagnosis else []
+        if checks:
+            check = checks[0]
+            return Outcome(template=f"I'd run `{check.command}` on {self.namer.device(check.device_id)} next, to "
+                                    f"{plain_lower(check.purpose.rstrip('.'))}. Want the full step-by-step list?",
+                           facts=self.facts(turn, "next_check"), actions=more, use_model=False)
+        return Outcome(template="There's nothing obvious left to check. I can write up step-by-step troubleshooting or draft a customer "
+                                "update.", facts=self.facts(turn, "nothing_next"), actions=more + [reply("Draft a customer update")],
+                       use_model=False)
+
     # ---------- intent handlers (no tools) ----------
 
     async def on_greeting(self, turn: Turn) -> Outcome:
         incident = turn.incident
         actions = []
         if incident is not None:
-            line = self.diagnosis_line(incident)
-            confirmed = incident.classification.confirmed_fault_domain
-            state = (f"It's {incident.status.value}. " if incident.status.value in ("resolved", "closed") else "")
-            review = (f"A person confirmed the fault domain as {FAULT_LABEL.get(confirmed.value, confirmed.value)}. " if confirmed
-                      else "It's still a hypothesis until a person confirms it. ")
-            template = (f"Hi! I'm keeping an eye on {incident.incident_id}: {incident.title}. {state}"
-                        + (f"{line}. {review}" if line else "There's no diagnosis on it yet. ")
-                        + "I can walk you through the evidence, run a specific read-only check, or start a full investigation "
-                          "when you ask. What are you seeing?")
-            if line:
+            diagnosis, _, _ = self.current_diagnosis(turn)
+            closed = f" It's {incident.status.value}." if incident.status.value in ("resolved", "closed") else ""
+            template = (f"Hi. I'm on {incident.incident_id}, about {self.reported_problem(turn)}.{closed} "
+                        f"{self.short_state(turn, diagnosis)} What do you need?")
+            if diagnosis is not None:
                 actions.append(reply("Explain the current diagnosis"))
         else:
-            template = ("Hi! I'm the network operations assistant. Tell me what users are seeing, ask about a device or a site, "
-                        "or ask me to diagnose a problem. I only run read-only checks, and only when you ask.")
+            template = "Hi. What are users seeing? I can check a device or site, or diagnose the problem."
         actions.append(reply("What can you do?"))
-        return Outcome(template=template, facts=self.facts(turn, "greeting", assistant_capabilities=CAPABILITIES), actions=actions)
+        return Outcome(template=template, facts=self.facts(turn, "greeting"), actions=actions, use_model=False)
 
     async def on_general(self, turn: Turn) -> Outcome:
         text = turn.user.content
+        if AFFIRM.match(text.strip()) and len(text.split()) <= 4 and not human_action_in(text):
+            # "Go ahead" with nothing waiting: ask what it refers to. Nothing runs on this turn.
+            return self.reoffer(turn)
+        settled = True
         if re.match(r"^(?:thanks?|thank you|thx|ty|cheers)", text, re.IGNORECASE):
-            template = "You're welcome. I'm here if anything else comes up."
+            template = "You're welcome."
         elif re.match(r"^(?:bye|goodbye|see you|that's all|that is all)", text, re.IGNORECASE):
-            template = "Okay. The conversation stays here if you need to pick it up again."
+            template = "Okay. This conversation stays here if you need it again."
         elif turn.intent.confidence == "high":
-            template = "Got it. Let me know what you'd like to look at next."
+            template = "Got it. Tell me what you want to look at next."
         else:
-            template = ("I'm not sure what you'd like me to do with that. You can describe what users are seeing, ask about a device "
-                        "(for example \"check SIN-RTR-01 routing\"), ask what a piece of evidence means, or ask me to diagnose the incident.")
-        return Outcome(template=template, facts=self.facts(turn, "general_conversation", assistant_capabilities=CAPABILITIES))
+            settled = False
+            template = ("I didn't follow that. You can ask what's wrong, why I think so or what to check next, or name a device to "
+                        "check, like \"check SIN-RTR-01 routing\".")
+        return Outcome(template=template, facts=self.facts(turn, "general_conversation", assistant_capabilities=CAPABILITIES),
+                       use_model=not settled)
 
     async def on_capabilities(self, turn: Turn) -> Outcome:
         lines = "\n".join(f"- {line}." for line in CAPABILITIES)
         role = ("" if can(turn.principal, Permission.RUN_DIAGNOSTICS)
-                else "\n\nYour role can read the conversation and the evidence but can't run checks.")
-        return Outcome(template=f"Here's how I can help:\n{lines}{role}",
-                       facts=self.facts(turn, "capabilities", assistant_capabilities=CAPABILITIES),
+                else " Your role can read the conversation and evidence but can't run checks.")
+        template = ("I can explain the diagnosis and its evidence, run read-only checks you ask for, diagnose the incident, give "
+                    "step-by-step troubleshooting with exact commands, and draft customer emails and updates. I never change devices "
+                    "or incidents." + role)
+        return Outcome(template=template, details=f"Here's how I can help:\n{lines}",
+                       facts=self.facts(turn, "capabilities", assistant_capabilities=CAPABILITIES), use_model=False,
                        actions=[reply("Explain the current diagnosis")] if self.diagnosis_line(turn.incident) else [])
 
     async def on_knowledge(self, turn: Turn) -> Outcome:
         context = turn.state.context
-        query = KnowledgeQuery(text=turn.user.content[:4000], site_id=context.site_ids[0] if context.site_ids else None, limit=3)
+        concepts = explain_concepts(turn.user.content)
+        site = None if concepts or not context.site_ids else context.site_ids[0]
+        query = KnowledgeQuery(text=turn.user.content[:4000], site_id=site, limit=3)
         result = await run_in_threadpool(self.services.knowledge.search, query)
         documents = []
         for match in result.matches[:3]:
@@ -662,14 +1319,27 @@ class ConversationService:
             documents.append({"record_id": match.record_id, "type": match.record_type.value, "title": match.title, "excerpt": excerpt})
         self.emit(turn, "knowledge.searched", {"query": turn.user.content[:200], "document_ids": [d["record_id"] for d in documents],
                                                "status": "guidance_only"})
-        if documents:
+        details_text: str | None = None
+        if concepts:
+            names = [name for name, _ in concepts]
+            body = "\n\n".join(f"**{name}**: {definition}" for name, definition in concepts)
+            summary = comparison(names)
+            related = [d for d in documents if any(name.lower() in d["title"].lower() or name.lower() in d["excerpt"].lower()
+                                                   for name in names)][:2]
+            more = ("\n\nRelated guidance in the knowledge base: " + ", ".join(f"**{d['title']}** (`{d['record_id']}`)" for d in related)
+                    if related else "")
+            template = ("This is general networking background, not evidence from this incident.\n\n" + body
+                        + (f"\n\n{summary}" if summary else "") + more)
+            documents = related
+        elif documents:
             listed = "\n".join(f"- **{d['title']}** (`{d['record_id']}`)" for d in documents)
-            template = (f"Here's what the knowledge base has on that. It's troubleshooting guidance, not evidence from this incident:\n{listed}"
-                        "\n\nIf one of these fits, I can run the matching read-only checks when you ask.")
+            template = (f"The closest guide is **{documents[0]['title']}** (`{documents[0]['record_id']}`)"
+                        + (f", plus {len(documents) - 1} more" if len(documents) > 1 else "") + ". It's guidance, not evidence.")
+            details_text = f"Knowledge base matches (troubleshooting guidance, not evidence from this incident):\n{listed}"
         else:
-            template = ("I couldn't find a playbook or runbook that matches. If you tell me what users are seeing, I can help narrow it down "
-                        "or run a specific read-only check.")
-        return Outcome(template=template, facts=self.facts(turn, "knowledge_question", knowledge_base=documents,
+            template = "I couldn't find a matching playbook or runbook. Tell me what users are seeing and I'll help narrow it down."
+        return Outcome(template=template, details=details_text, facts=self.facts(turn, "knowledge_question", knowledge_base=documents,
+                                                           general_concepts=[{"term": n, "definition": d} for n, d in concepts],
                                                            knowledge_notice="Unverified guidance; not evidence."),
                        knowledge_searches=1)
 
@@ -679,9 +1349,9 @@ class ConversationService:
             return Outcome(template="This conversation isn't linked to an incident. Open one from the incidents list, or describe what users "
                                     "are seeing and I'll help from there.", facts=self.facts(turn, "incident_question"))
         text = turn.user.content.lower()
-        record = incident.active_diagnosis
         actions: list[SuggestedAction] = []
         evidence: list[EvidenceReference] = []
+        details: str | None = None
         if re.search(r"severity|priority", text):
             template = (f"{incident.incident_id} is **{incident.severity.value}** severity ({incident.severity_source.value}) and priority "
                         f"**{incident.priority.value.upper()}** ({incident.priority_source.value}). Changing either is a human decision.")
@@ -692,25 +1362,37 @@ class ConversationService:
             open_items = [e for e in incident.escalations if e.status.value in ("recommended", "assigned")]
             template = (f"There are {len(incident.escalations)} escalations on {incident.incident_id}, {len(open_items)} still open."
                         if incident.escalations else f"Nothing has been escalated on {incident.incident_id} yet.")
-        elif re.search(r"next|should (?:i|we)|recommend", text) and record is not None:
-            checks = record.diagnosis.next_checks[:3]
-            listed = "\n".join(f"- `{c.command}` on {c.device_id}: {c.purpose}" for c in checks)
-            template = (f"Based on the current diagnosis, the next read-only checks are:\n{listed}\n\nA person still needs to confirm the "
-                        "fault domain before it's recorded." if checks else "The current diagnosis has no further read-only checks queued.")
-            actions.append(act("show_tab", "Show next checks", {"tab": "checks"}))
-        elif record is not None:
-            d = record.diagnosis
-            supporting = [item for item in d.evidence if item.evidence_id in set(d.fault.supporting_evidence_ids)][:3]
-            template = (f"{self.diagnosis_line(incident)}.\n\n" + "\n".join(bullet(item) for item in supporting)
-                        + "\n\nThat's the stored diagnosis; I haven't re-run anything. It still needs a person to confirm the fault domain.")
-            evidence = [reference(item, diagnosis_id=record.diagnosis_id) for item in supporting]
-            actions.append(act("explain_evidence", f"Explain {supporting[0].evidence_id}" if supporting else "Explain the evidence",
-                               {"evidence_ids": [supporting[0].evidence_id] if supporting else []}))
+        elif re.search(r"\bnext\b|should (?:i|we)|recommend", text):
+            return await self.next_check(turn)
         else:
-            template = (f"{incident.incident_id} ({incident.title}) is {incident.status.value} with {incident.severity.value} severity at "
-                        f"{self.site_names(incident.site_ids)}. There's no diagnosis yet. Want me to run one?")
-            actions = self.propose_diagnosis(turn)
-        return Outcome(template=template, facts=self.facts(turn, "incident_question"), actions=actions, evidence=evidence)
+            diagnosis, investigation_id, diagnosis_id = self.current_diagnosis(turn)
+            facts = self.facts(turn, "incident_question")
+            if re.search(r"confirm|verified", text):
+                template, actions = self.confirmed_answer(turn, diagnosis, facts)
+                return Outcome(template=template, facts=facts, actions=actions, use_model=False)
+            if WHAT_HAPPENED.match(turn.user.content.strip()) or re.search(r"summar|overview|what happened|recap", text):
+                reported = incident.created_at
+                parts = [f"It was reported at {reported:%H:%M} UTC on {reported:%d %b} for {self.namer.sites(incident.site_ids)}, "
+                         f"as \"{incident.title}\"."]
+                parts.append(self.namer.verdict(diagnosis, self.is_confirmed(turn, diagnosis)) if diagnosis
+                             else "Nobody has run a diagnosis yet.")
+                template = " ".join(self.with_security(turn, facts, parts))
+                actions = [reply("Explain the current diagnosis")] if diagnosis else self.propose_diagnosis(turn)
+            elif diagnosis is not None:
+                brief, cited = self.diagnosis_brief(turn, diagnosis, diagnosis.evidence, short=True)
+                template = " ".join(self.with_security(turn, facts, [brief]))
+                evidence = [reference(item, investigation_id, diagnosis_id) for item in cited[:6]]
+                source = (f"the investigation I ran in this conversation ({investigation_id})" if investigation_id
+                          else f"the incident's current diagnosis ({diagnosis_id})")
+                details = self.diagnosis_details(turn, diagnosis, diagnosis.evidence, source, investigation_id)
+                actions = [reply("Why do you think that?"), reply("What should I check next?")]
+            else:
+                template = (f"There's no diagnosis on {incident.incident_id} yet, so I can't say what's causing it. Want me to run one? "
+                            "It's read-only.")
+                actions = self.propose_diagnosis(turn)
+            return Outcome(template=template, details=details, facts=facts, actions=actions, evidence=evidence)
+        return Outcome(template=template, details=details, facts=self.facts(turn, "incident_question"), actions=actions,
+                       evidence=evidence, use_model=False)
 
     def missing_details(self, context: ConversationContext) -> list[str]:
         missing = []
@@ -725,12 +1407,20 @@ class ConversationService:
     def clarify(self, turn: Turn, missing: list[str], restate: str) -> Outcome:
         context = turn.state.context
         site = self.site_names(context.site_ids)
+        repeated_site = "site" in missing and "site" in context.asked
         questions = {
-            "site": "Which site are the affected users at?",
+            "site": ("I still need the site before I can pick the right checks. Which site or sites are affected?" if repeated_site
+                     else "Which site or sites are the affected users at?"),
             "scope": f"Is this hitting everyone at {site}, only some users, or a single person?",
             "services": "Which services are affected: internet access, internal apps like ERP or email, DNS, or Wi-Fi sign-in?",
         }
-        asked = missing[:2]
+        fresh = [item for item in missing if item not in context.asked or item == "site"]
+        if not fresh:
+            # Every open question was asked once already: don't ask again, proceed and say what is unknown.
+            return self.ready_to_diagnose(turn, assumed=missing)
+        # Adaptive clarification: one question per turn, the one that changes the investigation most (where, then what, then who).
+        asked = fresh[:1]
+        context.asked = list(dict.fromkeys(context.asked + asked))
         question = " ".join(questions[item] for item in asked)
         options = {"site": [self.index.site_names[s] for s in sorted(self.index.site_names)],
                    "scope": ["Everyone at the site", "Only some users", "Just one user"],
@@ -742,31 +1432,31 @@ class ConversationService:
             device = context.focus_device_id
             actions.append(act("targeted_check", f"Check {device} availability",
                                {"tool": "check_device_availability", "arguments": {"device_id": device}}, tools=True))
-        template = f"{restate} Before I run anything, {question[0].lower()}{question[1:]}"
+        template = f"{restate} {question}"
         return Outcome(template=template, facts=self.facts(turn, "clarification_needed", clarification=clarification.model_dump()),
                        clarification=clarification, actions=actions)
 
     def restatement(self, turn: Turn) -> str:
         context = turn.state.context
-        who = f"users at {self.site_names(context.site_ids)}" if context.site_ids else "users"
-        if context.scope:
-            who = f"{SCOPE_TEXT[context.scope]} at {self.site_names(context.site_ids)}" if context.site_ids else SCOPE_TEXT[context.scope]
-        what = ", ".join(context.symptoms[:3]) or "a problem"
-        named = [s.replace("_", " ") for s in context.services[:3] if s.replace("_", " ") not in what]
-        services = f" affecting {', '.join(named)}" if named else ""
-        return f"Got it: {who} are seeing {what}{services}."
+        who = SCOPE_TEXT.get(context.scope or "", "users")
+        who = f"{who} at {self.site_names(context.site_ids)}" if context.site_ids else f"{who} (site not given yet)"
+        symptoms = [ACRONYMS.sub(lambda m: m.group(1).upper(), item) for item in context.symptoms[:1]]
+        when = f" ({context.timeframe})" if context.timeframe else ""
+        parts = [f"Got it: {who}" + (f", {symptoms[0]}{when}" if symptoms else "") + "."]
+        if context.unaffected_site_ids:
+            parts.append(f"Unaffected: {self.site_names(context.unaffected_site_ids)}.")
+        return " ".join(parts)
 
-    def ready_to_diagnose(self, turn: Turn) -> Outcome:
+    def ready_to_diagnose(self, turn: Turn, assumed: list[str] | None = None) -> Outcome:
         context = turn.state.context
         context.pending_clarification = None
         actions = self.propose_diagnosis(turn)
-        timeframe = f" since {context.timeframe}" if context.timeframe and not context.timeframe.lower().startswith("since") else (
-            f" {context.timeframe}" if context.timeframe else "")
+        unknown = [ASSUMED[item] for item in assumed or [] if item in ASSUMED]
+        note = f" I'll treat the {' and '.join(unknown)} as unknown." if unknown else ""
         if actions:
-            template = (f"{self.restatement(turn)[:-1]}{timeframe}. That's enough to start. Want me to run a full diagnosis? It only "
-                        f"uses read-only checks, at most {MAX_TOOL_CALLS} tool calls.")
+            template = f"Thanks, that's enough to start.{note} Want me to run a full diagnosis? It's read-only."
         else:
-            template = (f"{self.restatement(turn)[:-1]}{timeframe}. "
+            template = (f"{self.restatement(turn)}{note} "
                         + ("Your role can't run diagnostics, so an operator would need to start the investigation."
                            if not can(turn.principal, Permission.RUN_DIAGNOSTICS)
                            else "This conversation isn't linked to a telemetry dataset, so I can't run checks yet."))
@@ -792,8 +1482,17 @@ class ConversationService:
                 turn.intent.planned_calls = calls
                 turn.intent.missing = missing
                 return await self.on_targeted_diagnostic(turn)
-        if pending is None and not (turn.intent.entities.scope or turn.intent.entities.timeframe):
+        if pending is not None and pending.for_intent == Intent.FULL_DIAGNOSIS and context.site_ids:
+            context.pending_clarification = None
+            return await self.on_full_diagnosis(turn)
+        entities = turn.intent.entities
+        supplied = entities.scope or entities.timeframe or entities.site_ids or entities.device_ids or entities.services \
+            or entities.unaffected_site_ids
+        if pending is None and not supplied:
             return await self.on_general(turn)
+        if pending is None and not (context.symptoms or context.notes or turn.incident is not None):
+            where = self.site_names(context.site_ids) if context.site_ids else "that"
+            return Outcome(template=f"Noted: {where}. What are users seeing there?", facts=self.facts(turn, "context_noted"))
         missing = self.missing_details(context)
         if missing:
             return self.clarify(turn, missing, "Thanks.")
@@ -802,24 +1501,31 @@ class ConversationService:
     async def on_status(self, turn: Turn) -> Outcome:
         state = turn.state
         latest = next(reversed(state.investigations.values()), None)
-        parts = ["Nothing is running right now."]
+        parts = ["Nothing's running right now."]
+        details = None
         if latest is not None:
             summary = latest.summary()
-            kind = "full diagnosis" if latest.kind == "full_diagnosis" else "targeted check"
-            parts.append(f"The last {kind} ({latest.investigation_id}) {summary.status} with {summary.tool_calls} "
-                         f"tool call{'s' if summary.tool_calls != 1 else ''} and {summary.evidence_count} evidence "
-                         f"item{'s' if summary.evidence_count != 1 else ''}"
-                         + (f", pointing to {FAULT_LABEL.get(summary.fault_domain, summary.fault_domain)} ({summary.confidence} confidence)"
-                            if summary.fault_domain else "") + ".")
+            kind = {"full_diagnosis": "diagnosis", "multi_agent": "specialist review", "protocol_check": "protocol check"}.get(latest.kind,
+                                                                                                                             "check")
+            ended = {"completed": "finished", "partial": "finished with gaps", "failed": "failed", "cancelled": "was stopped"}.get(
+                summary.status, summary.status)
+            calls = summary.tool_calls
+            found = (f" and pointed to {FAULT_PLAIN.get(summary.fault_domain, 'a fault')} at "
+                     f"{(summary.confidence or 'unknown').replace('_', ' ')} confidence"
+                     if summary.fault_domain and summary.fault_domain != "unknown" else "")
+            parts.append(f"The last {kind} here {ended} after {calls} read-only call{'s' if calls != 1 else ''}{found}.")
+            details = (f"Last investigation: {latest.investigation_id} ({latest.kind}, {summary.status}), {calls} tool calls, "
+                       f"{summary.evidence_count} evidence items.")
         if turn.incident is not None:
+            confirmed = turn.incident.classification.confirmed_fault_domain
             parts.append(f"{turn.incident.incident_id} is {turn.incident.status.value}"
-                         + (f" and the fault domain is confirmed as {turn.incident.classification.confirmed_fault_domain.value}."
-                            if turn.incident.classification.confirmed_fault_domain else "; the fault domain isn't confirmed yet."))
+                         + (f", and the cause is confirmed as {FAULT_LABEL.get(confirmed.value)}." if confirmed
+                            else ", and nobody has confirmed a cause yet."))
         if state.context.pending_action is not None:
-            parts.append("I'm waiting for your go-ahead on the full diagnosis I suggested.")
+            parts.append("I'm waiting for your go-ahead on the checks I offered.")
         if state.context.pending_clarification is not None:
-            parts.append(f"I'm still waiting on: {state.context.pending_clarification.question}")
-        return Outcome(template=" ".join(parts), facts=self.facts(turn, "status", investigations=[
+            parts.append(f"I still need one answer from you. {state.context.pending_clarification.question}")
+        return Outcome(template=" ".join(parts), details=details, use_model=False, facts=self.facts(turn, "status", investigations=[
             i.summary().model_dump(mode="json") for i in list(state.investigations.values())[-3:]]))
 
     async def on_human_action(self, turn: Turn) -> Outcome:
@@ -828,13 +1534,14 @@ class ConversationService:
         if action == "remediate":
             checks = incident.active_diagnosis.diagnosis.next_checks[:2] if incident and incident.active_diagnosis else []
             listed = "".join(f"\n- `{c.command}` on {c.device_id}" for c in checks)
-            template = ("I can't make changes. I only have read-only access to the synthetic telemetry, and any fix has to go through "
-                        "your change process and be carried out by an engineer."
-                        + (f" What I can do is help verify, for example:{listed}" if listed else
-                           " I can run read-only checks or a full diagnosis to support the change request."))
+            template = ("I can't make changes: I'm read-only, and fixes go through your change process. "
+                        "I can give you read-only verification steps instead.")
+            remediation_details = (f"Read-only checks that help verify a fix:{listed}" if listed else None)
             actions = [act("open_human_action", "Escalate", {"action": "escalate"}, human=True,
                            allowed=can(turn.principal, Permission.UPDATE_INCIDENTS))] if incident else []
-            return Outcome(template=template, facts=self.facts(turn, "remediation_refused"), actions=actions)
+            actions.append(reply("Give me step-by-step troubleshooting"))
+            return Outcome(template=template, details=remediation_details, facts=self.facts(turn, "remediation_refused"), actions=actions,
+                           use_model=False)
         if incident is None:
             return Outcome(template="This conversation isn't linked to an incident, so there's nothing to record that on.",
                            facts=self.facts(turn, "human_action_without_incident"))
@@ -845,16 +1552,13 @@ class ConversationService:
         confirmation = HumanConfirmation(action=action, label=label, reason=f"{label} is a human decision; the assistant never records it",
                                          permission=permission.value, allowed=allowed)
         self.emit(turn, "human_confirmation.required", confirmation.model_dump(mode="json"))
-        context_line = ""
-        if action == "confirm":
-            context_line = f" {self.diagnosis_line(incident)}." if incident.active_diagnosis else " There's no diagnosis to confirm yet."
-        how = (f"Use **{button}** to open the form; nothing is recorded until you submit it." if allowed
-               else f"Your role can't do this ({permission.value} is required), so it needs someone like an incident manager.")
-        template = f"{label} is a human decision, so I won't do it myself.{context_line} {how}"
+        how = (f"Use **{button}** when you're ready." if allowed
+               else f"Your role doesn't have the {permission.value} permission, so ask an incident manager.")
+        template = f"That's a decision for a person, so I won't do it myself. {how}"
         actions = [act("open_human_action", button, {"action": action}, human=True, allowed=allowed,
                        reason=None if allowed else f"Requires {permission.value}")]
         return Outcome(template=template, facts=self.facts(turn, "human_action_requested", human_action=label, allowed=allowed),
-                       actions=actions, confirmations=[confirmation])
+                       actions=actions, confirmations=[confirmation], use_model=False)
 
     def offer_attach(self, turn: Turn) -> Outcome:
         state = turn.state
@@ -894,22 +1598,31 @@ class ConversationService:
         if context.pending_action is not None or context.pending_clarification is not None:
             context.pending_action = None
             context.pending_clarification = None
-            return Outcome(template="Okay, I've dropped that. Nothing ran and nothing was changed.", facts=self.facts(turn, "cancelled"))
-        return Outcome(template="There's nothing running to cancel.", facts=self.facts(turn, "nothing_to_cancel"))
+            return Outcome(template="Okay, I've dropped that. Nothing ran and nothing was changed.", facts=self.facts(turn, "cancelled"),
+                           use_model=False)
+        return Outcome(template="There's nothing running to cancel.", facts=self.facts(turn, "nothing_to_cancel"), use_model=False)
 
     async def on_decline(self, turn: Turn) -> Outcome:
         turn.state.context.pending_action = None
         return Outcome(template="Okay, I won't run it. Tell me when you're ready, or ask about anything else.",
-                       facts=self.facts(turn, "proposal_declined"))
+                       facts=self.facts(turn, "proposal_declined"), use_model=False)
 
     async def on_confirmation(self, turn: Turn) -> Outcome:
         pending = turn.state.context.pending_action
         turn.state.context.pending_action = None
         if pending is None:
-            return await self.on_general(turn)
-        if pending.kind == "targeted_check":
+            return self.reoffer(turn)
+        if pending.kind in ("targeted_check", "plan"):
             turn.intent.planned_calls = list(pending.calls)
             return await self.on_targeted_diagnostic(turn)
+        if pending.kind == "multi_agent":
+            turn.intent.rerun = True
+            return await self.on_multi_agent(turn)
+        if pending.kind == "protocol":
+            turn.intent.planned_calls = list(pending.calls)
+            turn.intent.protocols = [c.arguments.get("protocol", "") for c in pending.calls]
+            turn.intent.rerun = True
+            return await self.on_protocol_check(turn)
         turn.intent.rerun = True
         return await self.on_full_diagnosis(turn)
 
@@ -932,7 +1645,7 @@ class ConversationService:
     @staticmethod
     def role_of(item: EvidenceItem, diagnosis: Diagnosis | None) -> str:
         if diagnosis is None:
-            return "context from a targeted check; not tied to a hypothesis"
+            return "comes from a targeted check and isn't tied to a hypothesis"
         if item.evidence_id in diagnosis.fault.supporting_evidence_ids:
             return "supports the current hypothesis"
         if item.evidence_id in diagnosis.fault.contradictory_evidence_ids:
@@ -940,7 +1653,7 @@ class ConversationService:
         for alternative in diagnosis.alternatives:
             if item.evidence_id in alternative.supporting_evidence_ids:
                 return f"supports the alternative hypothesis ({FAULT_LABEL.get(alternative.fault_domain.value)})"
-        return "collected during the diagnosis but not cited by the hypothesis"
+        return "was collected during the diagnosis but isn't cited by the hypothesis"
 
     async def on_evidence_explanation(self, turn: Turn) -> Outcome:
         wanted = turn.intent.entities.evidence_ids
@@ -949,49 +1662,165 @@ class ConversationService:
                   else f"the incident's current diagnosis ({diagnosis_id})")
         if not items:
             actions = self.propose_diagnosis(turn)
-            return Outcome(template="There's no evidence to explain yet: no diagnosis has been run"
+            return Outcome(template="There's no evidence to explain yet, because no diagnosis has run"
                                     + (" here or on the incident." if turn.incident else " in this conversation.")
                                     + (" Want me to run one?" if actions else ""),
                            facts=self.facts(turn, "no_evidence", proposal="Run a full read-only diagnosis" if actions else None),
-                           actions=actions)
+                           actions=actions, use_model=False)
         by_id = {item.evidence_id: item for item in items}
         refs = lambda chosen: [reference(i, investigation_id, diagnosis_id) for i in chosen]  # noqa: E731
+        facts_extra: dict[str, Any] = {}
         if wanted:
             found = [by_id[e] for e in wanted if e in by_id]
             unknown = [e for e in wanted if e not in by_id]
-            parts = []
+            short, parts = [], []
             for item in found:
                 kind, meaning = EVIDENCE_KIND[item.evidence_type]
                 on = f" on {item.device_id}" if item.device_id else ""
                 when = f" at {item.timestamp.strftime('%Y-%m-%d %H:%M UTC')}" if item.timestamp else ""
+                short.append(self.explain_one(item, diagnosis))
                 parts.append(f"**{item.evidence_id}** is {kind} from {TOOL_LABEL.get(item.tool, item.tool).lower()}{on} "
                              f"(call {item.call_id}{when}): \"{item.summary}\". {meaning} It {self.role_of(item, diagnosis)}.")
             if unknown:
-                parts.append(f"I don't have {', '.join(unknown)} in {source}; it has {items[0].evidence_id} to {items[-1].evidence_id}.")
-            template = "\n\n".join(parts) + f"\n\nThis comes from {source}; I didn't re-run anything."
-            chosen = found
+                note = f"I don't have {join(unknown)} here. The evidence runs from {items[0].evidence_id} to {items[-1].evidence_id}."
+                parts.append(note)
+                short.append(note)
+            template = " ".join(short)
+            details = "\n\n".join(parts) + f"\n\nThis comes from {source}; I didn't re-run anything."
+            chosen, level = found, "detail"
+            actions = [act("explain_evidence", f"Explain {i.evidence_id}", {"evidence_ids": [i.evidence_id]})
+                       for i in items if i not in chosen][:2]
         else:
+            text = turn.user.content
+            level = "technical" if SHOW_EVIDENCE.search(text) else "detail" if DEEPER.search(text) else "brief"
+            details = self.diagnosis_details(turn, diagnosis, items, source, investigation_id)
             if diagnosis is None:
-                chosen = items[:5]
-                template = f"Here's the evidence from {source}:\n" + "\n".join(bullet(i) for i in chosen)
+                template, chosen = self.findings_brief(turn, items, level)
+            elif level == "technical":
+                template, chosen = self.evidence_listing(turn, diagnosis, items), items[:12]
+            elif level == "detail":
+                template, chosen = self.diagnosis_reasons(turn, diagnosis, items)
             else:
-                supporting = [by_id[e] for e in diagnosis.fault.supporting_evidence_ids if e in by_id][:5]
-                chosen = supporting or items[:5]
-                fault = diagnosis.fault
-                template = (f"The hypothesis is **{fault.root_cause}** ({FAULT_LABEL.get(fault.fault_domain.value)}, "
-                            f"{diagnosis.confidence.level.value.replace('_', ' ')} confidence). {fault.reasoning}\n\n"
-                            + "\n".join(bullet(i) for i in chosen)
-                            + f"\n\n{diagnosis.confidence.explanation} This comes from {source}; I didn't re-run anything.")
+                template, chosen = self.diagnosis_brief(turn, diagnosis, items)
+            if diagnosis is not None and level != "technical":
+                template = " ".join(self.with_security(turn, facts_extra, [template]))
+            actions = ([reply("Why do you think that?")] if level == "brief" else
+                       [reply("Show the evidence")] if level == "detail" else [])
+            if diagnosis is not None and self.open_case(diagnosis):
+                actions.append(reply("What should I check next?"))
         facts = self.facts(turn, "evidence_explanation", evidence_source=source,
                            evidence=[evidence_fact(i, self.role_of(i, diagnosis)) for i in chosen[:MAX_FACT_EVIDENCE]],
                            hypothesis={"root_cause": diagnosis.fault.root_cause, "fault_domain": diagnosis.fault.fault_domain.value,
                                        "reasoning": diagnosis.fault.reasoning, "confidence": diagnosis.confidence.level.value,
                                        "confidence_explanation": diagnosis.confidence.explanation} if diagnosis else None,
-                           available_evidence_range=f"{items[0].evidence_id}-{items[-1].evidence_id}")
+                           available_evidence_range=f"{items[0].evidence_id}-{items[-1].evidence_id}", **facts_extra)
         facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {i.evidence_id for i in chosen})
-        actions = [act("explain_evidence", f"Explain {i.evidence_id}", {"evidence_ids": [i.evidence_id]})
-                   for i in items if i not in chosen][:2]
-        return Outcome(template=template, facts=facts, evidence=refs(chosen), actions=actions)
+        return Outcome(template=template, details=details, facts=facts, evidence=refs(chosen), actions=actions, level=level)
+
+    def current_diagnosis(self, turn: Turn) -> tuple[Diagnosis | None, str | None, str | None]:
+        """The latest full diagnosis in this conversation, else the incident's active diagnosis."""
+        state = turn.state
+        for investigation_id in reversed(list(state.investigations)):
+            if investigation_id in state.diagnoses and state.investigations[investigation_id].status in ("completed", "partial"):
+                return state.diagnoses[investigation_id], investigation_id, None
+        record = turn.incident.active_diagnosis if turn.incident else None
+        return (record.diagnosis, None, record.diagnosis_id) if record else (None, None, None)
+
+    def hypothesis_check_action(self, turn: Turn, domain: str) -> SuggestedAction | None:
+        topic = HYPOTHESIS_TOPIC.get(domain)
+        if topic is None or not self.can_diagnose(turn):
+            return None
+        calls, _, _ = Planner(self.index).plan(turn.user.content, [topic], turn.intent.entities, turn.state.context)
+        if not calls:
+            return None
+        call = calls[0]
+        return act("targeted_check", f"Check {FAULT_LABEL.get(domain, domain)} anyway",
+                   {"tool": call.tool, "arguments": call.arguments}, tools=True)
+
+    async def on_hypothesis_check(self, turn: Turn) -> Outcome:
+        domain = turn.intent.hypothesis or "unknown"
+        label = FAULT_LABEL.get(domain, domain)
+        diagnosis, investigation_id, diagnosis_id = self.current_diagnosis(turn)
+        if diagnosis is None:
+            topic = HYPOTHESIS_TOPIC.get(domain)
+            if topic and self.deny_tools(turn) is None:
+                calls, missing, _ = Planner(self.index).plan(turn.user.content, [topic], turn.intent.entities, turn.state.context)
+                if calls:
+                    turn.intent.planned_calls, turn.intent.missing, turn.intent.topics = calls, missing, [topic]
+                    return await self.on_targeted_diagnostic(turn)
+            actions = self.propose_diagnosis(turn)
+            return Outcome(template=f"I haven't collected any evidence yet, so I can't say whether it's {label}. "
+                                    + ("A full diagnosis would test it alongside the other likely causes. Want me to run one?"
+                                       if actions else "Tell me which site or device to look at first."),
+                           facts=self.facts(turn, "hypothesis_without_evidence", hypothesis=domain,
+                                            proposal="Run a full read-only diagnosis" if actions else None), actions=actions)
+        prefixes = HYPOTHESIS_CODES.get(domain, ())
+        pool: dict[str, EvidenceItem] = {item.evidence_id: item for item in diagnosis.evidence}
+        for investigation in turn.state.investigations.values():
+            pool.update({item.evidence_id: item for item in investigation.evidence})
+        related = [item for item in pool.values() if item.code.startswith(prefixes)]
+        fault = diagnosis.fault
+        supporting = set(fault.supporting_evidence_ids)
+        top = FAULT_LABEL.get(fault.fault_domain.value, fault.fault_domain.value)
+        confidence = diagnosis.confidence.level.value.replace("_", " ")
+        lines: list[str] = []
+        cited: list[EvidenceItem] = []
+        if fault.fault_domain.value == domain:
+            backing = [pool[e] for e in fault.supporting_evidence_ids if e in pool][:4]
+            lines.append(f"Yes, that's the current hypothesis: **{fault.root_cause}** ({confidence} confidence).")
+            lines += [bullet(item) for item in backing]
+            cited = backing
+        else:
+            lines.append("The diagnosis hasn't found a cause yet, so nothing is ruled in or out." if fault.fault_domain.value == "unknown"
+                         else f"The evidence so far points elsewhere: **{fault.root_cause}** ({top}, {confidence} confidence).")
+            alternative = next((a for a in diagnosis.alternatives if a.fault_domain.value == domain), None)
+            if alternative is not None and alternative.contradictory_evidence_ids:
+                ids = ", ".join(alternative.contradictory_evidence_ids[:4])
+                lines.append(f"{label.capitalize()} was considered and is contradicted by {ids}.")
+                cited += [pool[e] for e in alternative.contradictory_evidence_ids[:4] if e in pool]
+            elif alternative is not None:
+                lines.append(f"{label.capitalize()} remains an open alternative: {alternative.hypothesis}.")
+            downstream = [item for item in related if item.evidence_id in supporting or item.code.startswith(DOWNSTREAM_CODES)]
+            separate = [item for item in related if item not in downstream]
+            if downstream:
+                ids = ", ".join(item.evidence_id for item in downstream[:4])
+                lines.append(f"The {label} findings ({ids}) fit that hypothesis: they are what the {top} fault looks like from "
+                             f"{self.site_names(turn.state.context.site_ids)}, not a separate {label} fault.")
+                cited += downstream[:3]
+            if separate:
+                lines.append(f"These {label} findings are not explained by the hypothesis and are worth a look:")
+                lines += [bullet(item) for item in separate[:3]]
+                cited += separate[:3]
+            if not related and alternative is None:
+                lines.append(f"Nothing collected so far implicates {label}.")
+            path = diagnosis.affected_path
+            if path and path.reachability == "unreachable" and domain in BEYOND_THE_SITE and fault.device_ids:
+                lines.append(f"The path from {path.source} to {path.destination} breaks at {', '.join(fault.device_ids)}, so "
+                             f"traffic from the site never reaches {BEYOND_THE_SITE[domain]}.")
+        source = (f"the diagnosis in this conversation ({investigation_id})" if investigation_id
+                  else f"the incident's current diagnosis ({diagnosis_id})")
+        lines.append(f"This is from {source}; I haven't run anything new.")
+        verdict = self.namer.verdict(diagnosis, self.is_confirmed(turn, diagnosis), with_ids=True)
+        if fault.fault_domain.value == domain:
+            short = f"Yes, that's the current hypothesis. {verdict}"
+        elif fault.fault_domain.value == "unknown":
+            short = ("I can't say yet. The diagnosis hasn't found a cause, and "
+                     + (f"nothing collected so far implicates {label}." if not related
+                        else f"the {label} findings so far aren't enough to call it."))
+        else:
+            short = f"Probably not. The evidence points elsewhere. {verdict}"
+            reason = next((line for line in lines[1:] if not line.startswith("- ") and not line.startswith("This is from")), None)
+            if reason and len(reason) < 220:
+                short += f" {reason}"
+        actions = [a for a in [self.hypothesis_check_action(turn, domain)] if a is not None and fault.fault_domain.value != domain]
+        facts = self.facts(turn, "hypothesis_check", hypothesis=domain, evidence_source=source,
+                           current_hypothesis={"root_cause": fault.root_cause, "fault_domain": fault.fault_domain.value,
+                                               "confidence": diagnosis.confidence.level.value},
+                           evidence=[evidence_fact(item) for item in cited[:MAX_FACT_EVIDENCE]],
+                           proposal=actions[0].label if actions else None)
+        facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {item.evidence_id for item in cited})
+        return Outcome(template=first_mention(short), details="\n".join(lines), facts=facts, actions=actions,
+                       evidence=[reference(item, investigation_id, diagnosis_id) for item in cited[:MAX_FACT_EVIDENCE]])
 
     # ---------- tool-running handlers ----------
 
@@ -1007,7 +1836,7 @@ class ConversationService:
                            facts=self.facts(turn, "no_dataset"), use_model=False)
         return None
 
-    def start_investigation(self, turn: Turn, kind: Literal["full_diagnosis", "targeted_check"],
+    def start_investigation(self, turn: Turn, kind: Literal["full_diagnosis", "targeted_check", "multi_agent", "protocol_check"],
                             mode: Literal["agent", "rule_based", "direct"], model: str | None = None) -> Investigation:
         context = turn.state.context
         investigation = Investigation(investigation_id=new_id("INV", 6), conversation_id=turn.state.conversation_id,
@@ -1021,6 +1850,7 @@ class ConversationService:
         return investigation
 
     def close_investigation(self, turn: Turn, investigation: Investigation, status: str) -> None:
+        self.adopt_evidence(turn.state, investigation)
         if turn.observer is not None:
             turn.observer.closed = True
         investigation.status = status
@@ -1077,12 +1907,16 @@ class ConversationService:
         if denied is not None:
             return denied
         intent = turn.intent
+        if intent.broad and intent.source not in ("pending_action", "quick_action") and not intent.planned_calls:
+            return self.propose_broad(turn)
         calls = [c for c in intent.planned_calls if c.tool in REGISTRY][:4]
         if not calls:
             if intent.missing:
                 return self.targeted_clarification(turn, intent.missing)
             return Outcome(template="I couldn't work out which check you meant. Name the device and what to look at, for example "
                                     "\"check SIN-RTR-01 routing\".", facts=self.facts(turn, "unclear_check"))
+        context = turn.state.context
+        context.last_topics = list(dict.fromkeys(intent.topics or [TOOL_TOPIC[c.tool] for c in calls if c.tool in TOOL_TOPIC]))
         reused = {}
         if not intent.rerun:
             for call in calls:
@@ -1103,7 +1937,7 @@ class ConversationService:
                 "planned": [{"tool": c.tool, "label": TOOL_LABEL.get(c.tool, c.tool), "arguments": c.arguments, "reason": c.reason}
                             for c in fresh], "budget_limit": MAX_TOOL_CALLS})
             executor = ToolExecutor(context.scenario_id, max_calls=MAX_TOOL_CALLS, observer=turn.observer,
-                                    cancel_event=turn.handle.cancel_event)
+                                    cancel_event=turn.handle.cancel_event, evidence_offset=turn.state.evidence_seq)
             for call in fresh:
                 records.append(await asyncio.to_thread(executor.execute, call.tool, call.arguments))
             investigation.budget_used = executor.requests
@@ -1114,12 +1948,13 @@ class ConversationService:
                 "evidence": [reference(i, investigation.investigation_id).model_dump(mode="json") for i in investigation.evidence[:20]]})
             self.close_investigation(turn, investigation, "partial" if failed else "completed")
         lines: list[str] = []
+        short: list[str] = []
         evidence_items: list[tuple[EvidenceItem, str]] = []
         summaries: dict[int, str] = {}
         for call in calls:
             arguments = call.arguments
-            target = arguments.get("device_id") or arguments.get("site_id") or (
-                f"{arguments.get('source')} -> {arguments.get('destination')}" if "source" in arguments else "the site")
+            endpoints = [str(arguments[key]) for key in ("source", "destination") if arguments.get(key)]
+            target = arguments.get("device_id") or arguments.get("site_id") or (" -> ".join(endpoints) if endpoints else "the whole network")
             if id(call) in reused:
                 previous, step = reused[id(call)]
                 items = [i for i in previous.evidence if i.evidence_id in step.evidence_ids]
@@ -1127,6 +1962,7 @@ class ConversationService:
                 summaries[id(call)] = step.summary or "completed"
                 lines.append(f"**{TOOL_LABEL[call.tool]} for {target}**: I already ran this in {previous.investigation_id} "
                              f"({step.call_id}), so I'm reusing that result: {step.summary}.")
+                short.append(f"{TOOL_LABEL[call.tool]} for {target} (from the earlier check): {step.summary}.")
             else:
                 record = next(r for r, c in zip(records, fresh) if c is call)
                 items = [i for i in investigation.evidence if i.call_id == record.call_id]
@@ -1135,11 +1971,16 @@ class ConversationService:
                 lines.append(f"**{TOOL_LABEL[call.tool]} for {target}** ({record.call_id}): {summaries[id(call)]}.")
             evidence_items += [(i, source_id) for i in items]
             findings = [i for i in items if i.evidence_type != EvidenceType.RECORD]
+            if id(call) not in reused:
+                cited = f" ({findings[0].evidence_id})" if findings else ""
+                short.append(f"{TOOL_LABEL[call.tool]} for {target}: {summaries[id(call)]}{cited}.")
             lines += [bullet(i) for i in findings[:4]]
             if not findings and ok:
                 lines.append("- No fault findings in this result.")
         if intent.missing:
-            lines.append(f"I skipped part of the request because I need more detail: {self.targeted_clarification(turn, intent.missing).template}")
+            question = self.targeted_clarification(turn, intent.missing).template
+            lines.append(f"I skipped part of the request because I need more detail: {question}")
+            short.append(question)
         lines.append("These are read-only reads of the synthetic telemetry; nothing was changed.")
         chosen = evidence_items[:MAX_FACT_EVIDENCE]
         facts = self.facts(turn, "targeted_check", tools_ran_this_turn=bool(fresh), checks=[
@@ -1152,12 +1993,14 @@ class ConversationService:
             actions.append(act("explain_evidence", f"Explain {chosen[0][0].evidence_id}", {"evidence_ids": [chosen[0][0].evidence_id]}))
         if self.can_diagnose(turn):
             actions.append(act("full_diagnosis", "Run full diagnosis", tools=True))
-        return Outcome(template="\n".join(lines), facts=facts, investigation=investigation,
+        return Outcome(template="\n".join(short), details="\n".join(lines), facts=facts, investigation=investigation,
                        evidence=[reference(i, inv) for i, inv in chosen], actions=actions)
 
     def diagnosis_report(self, turn: Turn) -> str:
         context = turn.state.context
         parts = list(context.notes[-4:])
+        if context.unaffected_site_ids:
+            parts.append(f"{self.site_names(context.unaffected_site_ids)} reported unaffected.")
         if context.scope:
             parts.append(SCOPE_REPORT[context.scope])
         if context.services:
@@ -1208,7 +2051,7 @@ class ConversationService:
         services = [PathService(s) for s in context.services if s in PathService._value2member_map_]
         arguments = dict(scenario_id=context.scenario_id, report=report_text, site_ids=context.site_ids[:5],
                          device_ids=context.device_ids[:20], services=services, incident_id=context.incident_id,
-                         observer=turn.observer, cancel_event=turn.handle.cancel_event)
+                         observer=turn.observer, cancel_event=turn.handle.cancel_event, evidence_offset=state.evidence_seq)
         retriever = self.services.knowledge.diagnosis_retriever()
         try:
             if mode == "agent":
@@ -1232,6 +2075,8 @@ class ConversationService:
         investigation.fallback_used = mode == "agent" and not run.agent_completed
         investigation.knowledge_documents = sorted(run.budget.documents)
         state.diagnoses[investigation.investigation_id] = run.diagnosis
+        investigation.reasoning = await run_in_threadpool(self.reason, turn, run.diagnosis, investigation.evidence,
+                                                          checks_from_records(run.records))
         status = {"completed": "completed", "failed": "failed"}.get(run.diagnosis.incident.status.value, "partial")
         self.emit(turn, "evidence.correlated", {
             "investigation_id": investigation.investigation_id, "fault_domain": report.fault_domain.value,
@@ -1253,6 +2098,27 @@ class ConversationService:
         if investigation.mode == "rule_based":
             how += ", using the rule-based planner because no model is in use"
         confidence = report.confidence.level.value.replace("_", " ")
+        reasoning = investigation.reasoning
+        calibrated = reasoning.self_evaluation.calibrated_confidence if reasoning else confidence
+        short = self.namer.verdict(diagnosis, False, confidence=calibrated)
+        if self.open_case(diagnosis) or report.fault_domain.value == "unknown":
+            short += (f" I ran {calls} read-only check{'s' if calls != 1 else ''} and nothing explains "
+                      f"{self.reported_problem(turn)}.")
+        elif supporting:
+            clauses = [text for text, _ in self.namer.grouped(supporting, offices=self.offices(turn))][:1]
+            short += f" The main sign is that {clauses[0]}." if clauses else ""
+        if investigation.fallback_used:
+            short += " The AI model didn't finish, so the rule-based diagnosis produced this result."
+        if reasoning is not None:
+            worry = next((c for c in reasoning.contradictions if c.severity in ("strong", "moderate")), None)
+            if worry is not None:
+                short += f" One thing doesn't fit. {sentence(worry.statement)}"
+            elif reasoning.self_evaluation.verdict in ("weak", "review"):
+                short += " Treat it as provisional, because a self-check flagged it for review."
+        security = self.security_line(turn)
+        if security:
+            short += f" {security}"
+        short += " Want the evidence, or what to check next?"
         capped = f" (capped from {report.confidence.capped_from.value})" if report.confidence.capped_from else ""
         lines = [f"Here's what I found {how}:", "",
                  f"**{report.root_cause_hypothesis.statement}**",
@@ -1271,11 +2137,21 @@ class ConversationService:
         footer = f"This is a hypothesis for a person to review. Nothing has been changed or recorded{saved}."
         if investigation.fallback_used:
             footer = "The model didn't finish its own diagnosis, so this result comes from the rule-based planner. " + footer
-        lines.append(footer)
         actions: list[SuggestedAction] = []
         confirmations: list[HumanConfirmation] = []
         if supporting:
             actions.append(act("explain_evidence", f"Explain {supporting[0].evidence_id}", {"evidence_ids": [supporting[0].evidence_id]}))
+        attachments: list[Attachment] = []
+        if reasoning is not None:
+            lines += ["", self.reasoning_lines(reasoning)]
+            attachments.append(self.reasoning_attachment(reasoning))
+            offer = self.offer_plan(turn, reasoning) if (reasoning.uncertainty["level"] != "low"
+                                                         or reasoning.self_evaluation.verdict in ("weak", "review")) else None
+            if offer is not None:
+                actions.append(offer)
+        actions.append(reply("Give me step-by-step troubleshooting"))
+        if incident is not None:
+            actions.append(reply("Draft a customer update"))
         if incident is not None and investigation.status != "failed":
             allowed, reason = self.attach_allowed(turn.principal, incident)
             confirmations.append(HumanConfirmation(action="attach_investigation", label=f"Save the diagnosis to {incident.incident_id}",
@@ -1294,7 +2170,7 @@ class ConversationService:
             self.emit(turn, "human_confirmation.required", confirmation.model_dump(mode="json"))
         if report.recommended_next_checks:
             actions.append(act("show_tab", "Show next checks", {"tab": "checks"}))
-        facts = self.facts(turn, "full_diagnosis", tools_ran_this_turn=True, diagnosis={
+        facts = self.facts(turn, "full_diagnosis", tools_ran_this_turn=True, warnings=[security] if security else [], diagnosis={
             "investigation_id": investigation.investigation_id, "status": investigation.status, "method": report.method.value,
             "mode": investigation.mode, "fallback_used": investigation.fallback_used, "tool_calls": calls,
             "root_cause": report.root_cause_hypothesis.statement, "fault_domain": report.fault_domain.value,
@@ -1310,8 +2186,622 @@ class ConversationService:
             "saved_to_incident": False,
         }, evidence=[evidence_fact(i, "supports the hypothesis") for i in supporting])
         facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {i.evidence_id for i in investigation.evidence})
-        return Outcome(template="\n".join(lines), facts=facts, investigation=investigation, confirmations=confirmations,
-                       evidence=[reference(i, investigation.investigation_id) for i in supporting], actions=actions, footer=footer)
+        if reasoning is not None:
+            facts["reasoning"] = reasoning.compact()
+        lines += ["", footer]
+        return Outcome(template=short, details="\n".join(lines), facts=facts, investigation=investigation, confirmations=confirmations,
+                       evidence=[reference(i, investigation.investigation_id) for i in supporting], actions=actions,
+                       footer="Nobody has confirmed this yet, and nothing was changed.", attachments=attachments)
+
+    # ---------- diagnostic reasoning ----------
+
+    def scope_of(self, turn: Turn) -> Scope:
+        context = turn.state.context
+        text = " ".join(context.notes[-3:]) + " " + (turn.incident.description if turn.incident else "")
+        return Scope(context.scenario_id or "BASELINE", tuple(context.site_ids[:5]), tuple(context.services[:5]),
+                     tuple(context.device_ids[:10]), tuple(context.unaffected_site_ids[:5]), text[:2000])
+
+    def reason(self, turn: Turn, diagnosis: Diagnosis | None, evidence: list[EvidenceItem], ran: list[PlannedCheck]) -> ReasoningReport:
+        """The reasoning report for an evidence set. Related incidents come only from incidents this user may see."""
+        context = turn.state.context
+        onset = load_scenario(context.scenario_id).scenario.onset_at if context.scenario_id else None
+        conclusion = None
+        if diagnosis is not None:
+            conclusion = {"fault_domain": diagnosis.fault.fault_domain.value, "device_ids": diagnosis.fault.device_ids,
+                          "supporting_evidence_ids": diagnosis.fault.supporting_evidence_ids, "root_cause": diagnosis.fault.root_cause,
+                          "confidence": diagnosis.confidence.level.value}
+        current = others = None
+        if turn.incident is not None:
+            current = {"incident_id": turn.incident.incident_id, "site_ids": turn.incident.site_ids, "created_at": turn.incident.created_at,
+                       "devices": diagnosis.fault.device_ids if diagnosis else []}
+            try:
+                summaries = self.services.secured_incidents.list_incidents(turn.principal, IncidentFilter(limit=50))
+                others = [{"incident_id": i.incident_id, "title": i.title, "site_ids": i.site_ids, "created_at": i.created_at,
+                           "devices": i.device_ids} for i in summaries]
+            except Exception:
+                others = []
+        return analyze(evidence, self.scope_of(turn), onset, ran, conclusion, current_incident=current, other_incidents=others)
+
+    def reasoning_for(self, turn: Turn, investigation_id: str | None = None) -> ReasoningReport | None:
+        state = turn.state
+        if investigation_id and investigation_id in state.investigations and state.investigations[investigation_id].reasoning:
+            return state.investigations[investigation_id].reasoning
+        latest = next((i for i in reversed(state.investigations.values()) if i.reasoning is not None), None)
+        if latest is not None:
+            return latest.reasoning
+        record = turn.incident.active_diagnosis if turn.incident else None
+        if record is not None and turn.state.context.scenario_id:
+            return self.reason(turn, record.diagnosis, record.diagnosis.evidence, [])
+        return None
+
+    @staticmethod
+    def reasoning_lines(reasoning: ReasoningReport) -> str:
+        odds = ", ".join(f"{h.label} {percent(h.probability)}" for h in reasoning.hypotheses[:3])
+        specialists = "; ".join(f"{s.title.split()[0]}: {s.verdict}" for s in reasoning.specialists)
+        lines = [f"Probabilities: {odds}.", f"Uncertainty: {reasoning.uncertainty['statement']}", f"Specialists: {specialists}.",
+                 f"Self-check: {reasoning.self_evaluation.verdict} (calibrated confidence {reasoning.self_evaluation.calibrated_confidence})."]
+        if reasoning.causal.chain:
+            lines.append("Causal chain: " + " → ".join(f"{c['evidence_id']} {c['code'].lower().replace('_', ' ')}" for c in reasoning.causal.chain))
+        if reasoning.contradictions:
+            lines.append("Contradictions: " + " ".join(c.statement for c in reasoning.contradictions[:2]))
+        if reasoning.related_incidents:
+            lines.append("Possibly related: " + "; ".join(f"{r.incident_id} ({r.relation})" for r in reasoning.related_incidents[:2]))
+        return "\n".join(lines)
+
+    @staticmethod
+    def reasoning_attachment(reasoning: ReasoningReport) -> Attachment:
+        return Attachment(kind="reasoning", title="How I reached this", data={
+            "hypotheses": [h.model_dump(mode="json") for h in reasoning.hypotheses[:4]],
+            "uncertainty": reasoning.uncertainty, "chain": reasoning.causal.chain[:6], "coverage": reasoning.causal.coverage,
+            "contradictions": [c.model_dump(mode="json") for c in reasoning.contradictions[:4]],
+            "specialists": [{"agent": s.agent, "title": s.title, "verdict": s.verdict, "probability": s.probability,
+                             "statement": s.statement} for s in reasoning.specialists],
+            "self_evaluation": reasoning.self_evaluation.model_dump(mode="json"),
+            "explanation": reasoning.explanation.model_dump(mode="json"),
+            "cross_layer": {k: reasoning.cross_layer[k] for k in ("lowest_failing_layer", "conclusion_layer", "assessment")},
+            "related_incidents": [r.model_dump(mode="json") for r in reasoning.related_incidents[:3]],
+            "plan": [p.model_dump(mode="json") for p in reasoning.plan[:3]],
+        })
+
+    def offer_plan(self, turn: Turn, reasoning: ReasoningReport, limit: int = 2) -> SuggestedAction | None:
+        """User-approved execution: the planner's next checks are offered, never run until the user says so."""
+        if not self.can_diagnose(turn) or not reasoning.plan:
+            return None
+        steps = reasoning.plan[:limit]
+        calls = [PlannedCall(tool=s.tool, arguments=s.arguments, reason=s.purpose) for s in steps]
+        turn.state.context.plan = calls
+        turn.state.context.pending_action = PendingAction(kind="plan", calls=calls, proposed_at=now())
+        return act("run_plan", f"Run {len(calls)} more check{'s' if len(calls) != 1 else ''}",
+                   {"calls": [{"tool": c.tool, "arguments": c.arguments} for c in calls]}, tools=True)
+
+    # ---------- customer communication ----------
+
+    def customer_facts(self, turn: Turn) -> assist.Facts:
+        incident = turn.incident
+        context = turn.state.context
+        diagnosis, _, _ = self.current_diagnosis(turn)
+        confirmed = incident.classification.confirmed_fault_domain if incident else None
+        domain = diagnosis.fault.fault_domain.value if diagnosis else None
+        services = list(context.services)
+        if not services and incident is not None:
+            text = incident.description + ". " + ". ".join(incident.symptoms)
+            services = [s for s in self.understand_services(text) if not unaffected(s, text)]
+        return assist.Facts(
+            incident_id=incident.incident_id if incident else None, title=incident.title if incident else None,
+            sites=list(incident.site_ids if incident else context.site_ids), services=services,
+            symptoms=list(incident.symptoms if incident else context.symptoms), status=incident.status.value if incident else None,
+            severity=incident.severity.value if incident else None, priority=incident.priority.value if incident else None,
+            reported_at=incident.created_at if incident else None, root_cause=diagnosis.fault.root_cause if diagnosis else None,
+            root_cause_confirmed=bool(confirmed and domain and confirmed.value == domain),
+            fault_label=FAULT_LABEL.get(confirmed.value if confirmed else domain or "unknown"),
+            diagnosis_confidence=diagnosis.confidence.level.value if diagnosis else None,
+            cause_supported=not self.open_case(diagnosis))
+
+    def understand_services(self, text: str) -> list[str]:
+        from app.conversation.entities import extract
+        return extract(text, self.index).services
+
+    async def on_customer_email(self, turn: Turn) -> Outcome:
+        context = turn.state.context
+        context.draft_audience = turn.intent.audience or context.draft_audience
+        context.draft_tone = turn.intent.tone or context.draft_tone
+        facts = self.customer_facts(turn)
+        short = bool(SHORTER.search(turn.user.content))
+        draft = assist.draft_email(facts, context.draft_audience, context.draft_tone, short=short)
+        issues = assist.draft_issues(draft, facts)
+        if issues:
+            logger.warning("Email draft failed validation: %s", "; ".join(issues))
+        who = "the team" if context.draft_audience == "internal" else "the customer"
+        lead = "Here's a shorter version." if short else f"Here's a draft for {who}."
+        template = (f"{lead} It hasn't been sent. Fill in {join(draft['placeholders'][:3])} before you send it."
+                    f"\n\n**Subject:** {draft['subject']}\n\n{draft['body']}")
+        other = "internal" if context.draft_audience == "customer" else "customer"
+        actions = [reply("Make it more formal" if context.draft_tone == "friendly" else "Make it friendlier"),
+                   reply(f"Write the {other} version")]
+        return Outcome(template=template, use_model=False, actions=actions,
+                       facts=self.facts(turn, "customer_email", draft={k: draft[k] for k in ("subject", "audience", "stage", "status")},
+                                        validation_issues=issues),
+                       attachments=[Attachment(kind="email_draft", title=draft["subject"], data=draft | {"validation_issues": issues})])
+
+    async def on_customer_update(self, turn: Turn) -> Outcome:
+        context = turn.state.context
+        context.draft_audience = turn.intent.audience or context.draft_audience
+        facts = self.customer_facts(turn)
+        draft = assist.draft_update(facts, context.draft_audience)
+        issues = assist.draft_issues(draft, facts)
+        template = f"Here's an update you can post. I haven't sent or posted it.\n\n{draft['body']}"
+        return Outcome(template=template, use_model=False, actions=[reply("Write it as an email")],
+                       facts=self.facts(turn, "customer_update", draft={"stage": draft["stage"], "status": draft["status"]},
+                                        validation_issues=issues),
+                       attachments=[Attachment(kind="customer_update", title=draft["title"], data=draft | {"validation_issues": issues})])
+
+    # ---------- step-by-step troubleshooting ----------
+
+    def guide_target(self, turn: Turn) -> tuple[str | None, str | None]:
+        entities = turn.intent.entities
+        context = turn.state.context
+        device = entities.device_ids[0] if entities.device_ids else None
+        # A device id like DC1-FW-01 also names its site; for a core or data-centre device keep the user site in context,
+        # since the useful commands depend on which users are affected.
+        named = [s for s in entities.site_ids if not (device and s == self.index.devices[device].site_id and s in ("CORE", "DC1"))]
+        site = (named or context.site_ids or (turn.incident.site_ids if turn.incident else []) or [None])[0]
+        return site, device
+
+    async def on_troubleshooting(self, turn: Turn) -> Outcome:
+        context = turn.state.context
+        if NEXT_CHECK.search(turn.user.content) and not STEPS_WANTED.search(turn.user.content):
+            return await self.next_check(turn)
+        if self.after_protocol_check(turn) and (protocol := self.protocol_commands(turn)):
+            steps = [{"number": n, "device_id": c["device_id"], "platform": c["platform"], "title": c["purpose"], "command": c["command"],
+                      "expected_healthy": c["expected_healthy"], "expected_fault": c["expected_fault"], "if_fault": c["if_fault"],
+                      "if_healthy": c["if_healthy"], "domain": c["domain"], "tool_equivalent": None} for n, c in enumerate(protocol, start=1)]
+            guide = {"title": "Read-only troubleshooting for the protocol findings", "site_id": context.site_ids[0] if context.site_ids else None,
+                     "device_id": None, "domain": None, "steps": steps, "current": 1,
+                     "notice": "Every command is read-only. Changes, if needed, go through your change process."}
+            context.guide = guide
+            return Outcome(template=f"Here are {len(steps)} read-only steps for the protocol findings:\n\n" + assist.render_guide(guide)
+                                    + "\n\nPaste any output and I'll tell you what it means.", use_model=False,
+                           facts=self.facts(turn, "troubleshooting"), attachments=[Attachment(kind="troubleshooting_guide", title=guide["title"], data=guide)])
+        site, device = self.guide_target(turn)
+        grounds = self.grounds(turn)
+        plan = assist.plan_checks(grounds, site, device)
+        guide = assist.troubleshooting_guide(site, list(context.services), device, grounds.domain, grounds=grounds)
+        if not guide["steps"]:
+            return self.more_evidence(turn, grounds)
+        context.guide = guide | {"current": 1}
+        template = (f"{self.guide_lead(grounds, plan, len(guide['steps']))}\n\n" + assist.render_guide(guide)
+                    + "\n\nPaste any output and I'll tell you what it means.")
+        actions = []
+        runnable = assist.runnable(guide["steps"], set(REGISTRY))[:3]
+        if runnable and self.can_diagnose(turn):
+            calls = [PlannedCall(tool=s["tool_equivalent"]["tool"], arguments=s["tool_equivalent"]["arguments"],
+                                 reason=f"Step {s['number']}: {s['title']}") for s in runnable]
+            context.pending_action = PendingAction(kind="plan", calls=calls, proposed_at=now())
+            numbers = join(str(s["number"]) for s in runnable)
+            template += f" I can also run steps {numbers} for you as read-only checks. Just say go ahead."
+            actions.append(act("run_plan", f"Run steps {numbers} for me", {"calls": [{"tool": c.tool, "arguments": c.arguments}
+                                                                                      for c in calls]}, tools=True))
+        facts, refs = self.grounded(turn, "troubleshooting", grounds, plan)
+        return Outcome(template=template, use_model=False, actions=actions, facts=facts, evidence=refs,
+                       attachments=[Attachment(kind="troubleshooting_guide", title=guide["title"], data=guide)])
+
+    async def on_commands(self, turn: Turn) -> Outcome:
+        context = turn.state.context
+        if self.after_protocol_check(turn) and (protocol := self.protocol_commands(turn)):
+            listed = "\n".join(f"{n}. `{c['command']}` on {c['device_id']} ({c['platform']}): {c['purpose'].rstrip('.')}. Healthy: {c['expected_healthy']}."
+                               for n, c in enumerate(protocol, start=1))
+            return Outcome(template=f"Read-only commands for the protocol findings:\n{listed}", use_model=False,
+                           facts=self.facts(turn, "commands"),
+                           attachments=[Attachment(kind="commands", title="Read-only commands for the protocol findings", data={"commands": protocol})])
+        site, device = self.guide_target(turn)
+        device = device or context.focus_device_id
+        grounds = self.grounds(turn)
+        plan = assist.plan_checks(grounds, site, device)
+        commands = plan.commands
+        if not commands:
+            return self.more_evidence(turn, grounds)
+        target = device or self.namer.site(site) if (device or site) else "this incident"
+        listed = "\n".join(f"{n}. `{c.command}` on {c.device_id}: {c.purpose.rstrip('.')}. Healthy: {c.healthy}."
+                           for n, c in enumerate(commands, start=1))
+        lead = self.guide_lead(grounds, plan, len(commands)).replace("steps", "commands").replace("step", "command") \
+            if not device else f"Read-only commands for {target}:"
+        facts, refs = self.grounded(turn, "commands", grounds, plan)
+        return Outcome(template=f"{lead}\n{listed}", use_model=False, facts=facts, evidence=refs,
+                       attachments=[Attachment(kind="commands", title=f"Read-only commands for {target}",
+                                               data={"commands": [c.as_dict() for c in commands]})])
+
+    def guide_step(self, turn: Turn, command: str | None = None, number: int | None = None) -> dict | None:
+        guide = turn.state.context.guide
+        if not guide:
+            return None
+        steps = guide["steps"]
+        if number is not None:
+            return next((s for s in steps if s["number"] == number), None)
+        if command:
+            return next((s for s in steps if s["command"].startswith(command)), None)
+        return None
+
+    async def on_output_interpretation(self, turn: Turn) -> Outcome:
+        result = assist.interpret(turn.user.content)
+        if result["verdict"] == "error":
+            return await self.on_step_failed(turn)
+        context = turn.state.context
+        step = self.guide_step(turn, command=result["command"]) or self.guide_step(turn, number=turn.intent.step)
+        template = result["summary"]
+        if step is not None:
+            follow = step["if_fault"] if result["verdict"] == "fault" else step["if_healthy"] if result["verdict"] == "healthy" else None
+            if follow:
+                template += f" Next: {follow}"
+            context.guide = context.guide | {"current": min(len(context.guide["steps"]), step["number"] + 1)}
+        if result["security_flags"]:
+            template += " (I ignored instructions inside the pasted text; it's treated as data.)"
+        return Outcome(template=template, use_model=False, facts=self.facts(turn, "output_interpretation"),
+                       attachments=[Attachment(kind="output_interpretation", title=f"Reading of {result['command'] or 'the output'}",
+                                               data=result | {"step": step["number"] if step else None})])
+
+    async def on_step_failed(self, turn: Turn) -> Outcome:
+        step = self.guide_step(turn, number=turn.intent.step) if turn.intent.step else None
+        help_ = assist.failure_help(turn.user.content, step)
+        template = f"{help_['reason']} {help_['advice']}"
+        if help_["alternative"]:
+            template += f" Try `{help_['alternative']['command']}` on {help_['alternative']['device_id']}."
+        guide = turn.state.context.guide
+        if step and guide and step["number"] < len(guide["steps"]):
+            template += f" Or skip to step {step['number'] + 1}."
+        return Outcome(template=template, use_model=False, facts=self.facts(turn, "step_failed"),
+                       actions=[reply("Next step")] if guide else [])
+
+    async def on_detail(self, turn: Turn) -> Outcome:
+        previous = next((m for m in reversed(turn.state.messages[:-1]) if m.role == "assistant"), None)
+        if (previous is None or not previous.details) and (TECHNICAL_ASK.search(turn.user.content) or previous is None):
+            items, investigation_id, diagnosis_id, diagnosis = self.evidence_source(turn, [])
+            if diagnosis is not None and items:
+                source = (f"the investigation I ran in this conversation ({investigation_id})" if investigation_id
+                          else f"the incident's current diagnosis ({diagnosis_id})")
+                facts = self.facts(turn, "detail")
+                facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {i.evidence_id for i in items})
+                return Outcome(template=self.evidence_listing(turn, diagnosis, items), use_model=False, level="technical", facts=facts,
+                               details=self.diagnosis_details(turn, diagnosis, items, source, investigation_id),
+                               evidence=[reference(i, investigation_id, diagnosis_id) for i in items[:12]])
+        if previous is None or not previous.details:
+            return Outcome(template="That's everything I have on it. Want the evidence or step-by-step troubleshooting?",
+                           facts=self.facts(turn, "no_more_detail"))
+        facts = self.facts(turn, "detail")
+        known = {i.evidence_id for inv in turn.state.investigations.values() for i in inv.evidence}
+        if turn.incident and turn.incident.active_diagnosis:
+            known |= {i.evidence_id for i in turn.incident.active_diagnosis.diagnosis.evidence}
+        facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | known | {r.evidence_id for r in previous.evidence_refs})
+        return Outcome(template=previous.details, use_model=False, facts=facts,
+                       evidence=list(previous.evidence_refs), attachments=list(previous.attachments))
+
+    async def on_continue(self, turn: Turn) -> Outcome:
+        context = turn.state.context
+        guide = context.guide
+        if guide and guide.get("current", 1) <= len(guide["steps"]):
+            index = guide.get("current", 1)
+            step = guide["steps"][index - 1]
+            context.guide = guide | {"current": index + 1}
+            return Outcome(template=f"Step {step['number']} of {len(guide['steps'])}:\n\n" + assist.render_guide(guide, index - 1, 1),
+                           use_model=False, facts=self.facts(turn, "guide_step"))
+        reasoning = self.reasoning_for(turn)
+        offer = self.offer_plan(turn, reasoning, limit=1) if reasoning is not None else None
+        if offer is not None:
+            return Outcome(template=f"Next I'd {reasoning.plan[0].purpose[0].lower()}{reasoning.plan[0].purpose[1:]} Want me to run it?",
+                           facts=self.facts(turn, "plan_offered", proposal=offer.label), actions=[offer, reply("Not yet")])
+        if turn.state.investigations:
+            return Outcome(template="Nothing's left to run. I can draft a customer update or give step-by-step troubleshooting.",
+                           facts=self.facts(turn, "nothing_next"),
+                           actions=[reply("Draft a customer update"), reply("Give me step-by-step troubleshooting")])
+        actions = self.propose_diagnosis(turn)
+        return Outcome(template="We haven't started yet. Want me to run a full diagnosis?" if actions
+                       else "We haven't started yet. Tell me what users are seeing.", facts=self.facts(turn, "nothing_started"),
+                       actions=actions)
+
+    # ---------- specialists and multi-agent investigation ----------
+
+    async def on_specialist_review(self, turn: Turn) -> Outcome:
+        name = turn.intent.specialist
+        reasoning = self.reasoning_for(turn)
+        if reasoning is None:
+            agent = AGENTS.get(name or "transport")
+            scope = self.scope_of(turn)
+            checks = agent.plan(scope)[:3] if scope.site_ids else []
+            if not checks or not self.can_diagnose(turn):
+                return Outcome(template="There's no evidence for the specialists to review yet. Want me to run a diagnosis?",
+                               facts=self.facts(turn, "no_evidence"), actions=self.propose_diagnosis(turn))
+            calls = [PlannedCall(tool=c.tool, arguments=c.arguments, reason=c.reason) for c in checks]
+            turn.state.context.pending_action = PendingAction(kind="plan", calls=calls, proposed_at=now())
+            return Outcome(template=f"The {agent.title.lower()} would start with {len(calls)} read-only checks: "
+                                    + "; ".join(c.reason.rstrip("?") for c in checks) + ". Want me to run them?",
+                           facts=self.facts(turn, "specialist_plan", proposal="Run the specialist's checks"),
+                           actions=[act("run_plan", "Run them", {"calls": [{"tool": c.tool, "arguments": c.arguments} for c in calls]},
+                                        tools=True), reply("Not yet")])
+        views = [s for s in reasoning.specialists if name is None or s.agent == name]
+        template = " ".join(f"{s.title}: {s.statement}" for s in views[:4])
+        details = "\n".join(f"- **{s.title}** ({s.verdict}, {percent(s.probability)}): {s.statement}"
+                            + (f" Evidence: {', '.join(s.evidence_ids[:3])}." if s.evidence_ids else "") for s in views)
+        facts = self.facts(turn, "specialist_review")
+        facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {e for s in views for e in s.evidence_ids})
+        return Outcome(template=template, details=details, facts=facts,
+                       attachments=[Attachment(kind="specialists", title="Specialist reviews",
+                                               data={"specialists": [s.model_dump(mode="json") for s in views]})])
+
+    async def on_multi_agent(self, turn: Turn) -> Outcome:
+        denied = self.deny_tools(turn)
+        if denied is not None:
+            return denied
+        state, context = turn.state, turn.state.context
+        if not context.site_ids:
+            clarification = Clarification(question="Which site should the specialists look at?", missing=["site"],
+                                          options=[self.index.site_names[s] for s in sorted(self.index.site_names)])
+            context.pending_clarification = PendingClarification(for_intent=Intent.FULL_DIAGNOSIS, question=clarification.question,
+                                                                 missing=["site"])
+            return Outcome(template=clarification.question, clarification=clarification,
+                           facts=self.facts(turn, "clarification_needed", clarification=clarification.model_dump()))
+        scope = self.scope_of(turn)
+        fingerprint = hashlib.sha256(f"team|{scope}".encode()).hexdigest()
+        if not turn.intent.rerun:
+            for investigation_id, previous_print in reversed(state.fingerprints.items()):
+                previous = state.investigations.get(investigation_id)
+                if previous_print == fingerprint and previous is not None and previous.reasoning is not None:
+                    return Outcome(template=f"The specialists already looked at exactly this ({investigation_id}): "
+                                            f"{previous.reasoning.explanation.summary} Say \"run it again\" for a fresh run.",
+                                   facts=self.facts(turn, "team_reused"), actions=[act("multi_agent", "Run it again", tools=True)])
+        investigation = self.start_investigation(turn, "multi_agent", "direct")
+        state.fingerprints[investigation.investigation_id] = fingerprint
+        self.emit(turn, "investigation.started", {"investigation_id": investigation.investigation_id, "kind": "multi_agent",
+                                                  "mode": "direct", "agents": list(AGENTS), "budget_limit": MAX_TOOL_CALLS})
+        run = await asyncio.to_thread(team_investigate, scope, MAX_TOOL_CALLS, turn.observer, turn.handle.cancel_event, state.evidence_seq)
+        investigation.evidence = run.evidence
+        investigation.budget_used = len(run.records)
+        investigation.reasoning = await run_in_threadpool(self.reason, turn, None, run.evidence, run.executed)
+        self.close_investigation(turn, investigation, "completed" if all(r.succeeded for r in run.records) else "partial")
+        reasoning = investigation.reasoning
+        if reasoning.fault_supported:
+            lead = reasoning.hypotheses[0]
+            implicated = next((s for s in reasoning.specialists if s.verdict == "implicated"), None)
+            template = (f"The specialists point to **{lead.label}** ({percent(lead.probability)}, "
+                        f"{reasoning.self_evaluation.calibrated_confidence} confidence)."
+                        + (f" {implicated.statement.rstrip('.')}." if implicated else "") + " Want each specialist's view?")
+        elif reasoning.suspected:
+            template = (f"The specialists ran {len(run.executed)} read-only checks. Nothing is confirmed, but one thing looks suspicious "
+                        f"and could explain it: {reasoning.suspected[0]}. Treat it as unconfirmed until someone checks it. "
+                        "Want each specialist's view?")
+        else:
+            template = f"The specialists ran {len(run.executed)} read-only checks and found no fault. Want each specialist's view?"
+        refs = [reference(i, investigation.investigation_id) for i in run.evidence
+                if reasoning.hypotheses and i.evidence_id in reasoning.hypotheses[0].supporting_evidence_ids][:6]
+        facts = self.facts(turn, "multi_agent", tools_ran_this_turn=True, reasoning=reasoning.compact())
+        facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {i.evidence_id for i in run.evidence})
+        return Outcome(template=template, details=self.reasoning_lines(reasoning), facts=facts, investigation=investigation,
+                       evidence=refs, result_by="rule_based", attachments=[self.reasoning_attachment(reasoning)],
+                       actions=[reply("What do the specialists think?"), reply("Give me step-by-step troubleshooting")])
+
+    # ---------- Phase 3: protocol and security checks (approval first, read-only, synthetic telemetry) ----------
+
+    def protocol_where(self, turn: Turn, calls: list[PlannedCall]) -> str:
+        sites = sorted({c.arguments["site_id"] for c in calls if c.arguments.get("site_id")})
+        return self.site_names(sites) if sites else "all sites"
+
+    @staticmethod
+    def protocol_names(engines: list[str]) -> str:
+        names = [PROTOCOL_SHORT.get(e, e) for e in engines]
+        return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+    def protocol_calls(self, turn: Turn, engines: list[str]) -> list[PlannedCall]:
+        context = turn.state.context
+        site = context.site_ids[0] if len(context.site_ids) == 1 else None
+        return [PlannedCall(tool="analyze_protocol", arguments={"protocol": e, **({"site_id": site} if site else {})},
+                            reason=f"{PROTOCOL_SHORT.get(e, e)} check requested by you") for e in engines]
+
+    @staticmethod
+    def protocol_action(label: str, calls: list[PlannedCall]) -> SuggestedAction:
+        return act("protocol", label, {"calls": [{"tool": c.tool, "arguments": c.arguments} for c in calls]}, tools=True)
+
+    async def on_protocol_check(self, turn: Turn) -> Outcome:
+        denied = self.deny_tools(turn)
+        if denied is not None:
+            return denied
+        state, context, intent = turn.state, turn.state.context, turn.intent
+        if intent.scan_refused:
+            calls = self.protocol_calls(turn, ["traffic", "lateral", "threats"])
+            context.pending_action = PendingAction(kind="protocol", calls=calls, proposed_at=now())
+            return Outcome(template="I don't scan networks or send probes; I only read telemetry that was already collected. I can review the "
+                                    "collected flow and login records for scans, suspicious traffic and lateral movement instead. Go ahead?",
+                           facts=self.facts(turn, "scan_declined"), use_model=False,
+                           actions=[self.protocol_action("Review the collected records", calls), reply("No thanks")])
+        calls = [c for c in intent.planned_calls if c.tool == "analyze_protocol"]
+        if not calls:
+            engines = [e for e in intent.protocols if e in PROTOCOL_ENGINES or e == "all"]
+            if not engines:
+                text = " ".join(context.notes[-3:] + context.symptoms + ([turn.incident.title, turn.incident.description] if turn.incident else []))
+                engines = engines_for_symptoms(text)[:4]
+            if not engines:
+                return Outcome(template="Which protocol should I look at? For example BGP, the OSPF database, spanning tree, ARP, trunks, NAT, "
+                                        "VPN tunnels, TCP, MTU, QoS, IPv6, Wi-Fi, multicast, certificates, or a security review.",
+                               facts=self.facts(turn, "protocol_unclear"), use_model=False)
+            calls = self.protocol_calls(turn, engines)
+        engines = [c.arguments.get("protocol", "") for c in calls][:6]
+        calls = calls[:6]
+        names, where = self.protocol_names(engines), self.protocol_where(turn, calls)
+        fingerprint = hashlib.sha256(f"protocol|{context.scenario_id}|{sorted(str(c.arguments) for c in calls)}".encode()).hexdigest()
+        approved = intent.source in ("pending_action", "quick_action")
+        if not approved:
+            if not intent.rerun:
+                for investigation_id, previous_print in reversed(state.fingerprints.items()):
+                    previous = state.investigations.get(investigation_id)
+                    if previous_print == fingerprint and previous is not None and previous.protocol:
+                        return Outcome(template=f"I already ran the {names} check for {where} ({investigation_id}): "
+                                                f"{previous.protocol['headline']} Say \"run it again\" to refresh it.",
+                                       facts=self.facts(turn, "protocol_reused", protocol={"headline": previous.protocol["headline"]}),
+                                       use_model=False, actions=[self.protocol_action("Run it again", calls)])
+            context.pending_action = PendingAction(kind="protocol", calls=calls, proposed_at=now())
+            plural = "s" if len(engines) > 1 or engines == ["all"] else ""
+            lead = f"{self.attack_answer(turn)} " if ATTACK_QUESTION.search(turn.user.content) else ""
+            return Outcome(template=f"{lead}I can run the read-only {names} check{plural} for {where}. "
+                                    f"{'They only read' if plural else 'It only reads'} telemetry that's already been collected. Go ahead?",
+                           facts=self.facts(turn, "protocol_offer", planned=[c.arguments for c in calls]), use_model=False,
+                           actions=[self.protocol_action(f"Run the {names} check{plural}" if len(engines) <= 2 else f"Run these {len(engines)} checks",
+                                                         calls), reply("No thanks")])
+        investigation = self.start_investigation(turn, "protocol_check", "direct")
+        state.fingerprints[investigation.investigation_id] = fingerprint
+        self.emit(turn, "investigation.started", {
+            "investigation_id": investigation.investigation_id, "kind": "protocol_check", "mode": "direct",
+            "planned": [{"tool": c.tool, "label": f"{PROTOCOL_SHORT.get(c.arguments.get('protocol'), 'Protocol')} check",
+                         "arguments": c.arguments, "reason": c.reason} for c in calls], "budget_limit": MAX_TOOL_CALLS})
+        executor = ToolExecutor(context.scenario_id, max_calls=MAX_TOOL_CALLS, observer=turn.observer, cancel_event=turn.handle.cancel_event,
+                                evidence_offset=state.evidence_seq)
+        records = [await asyncio.to_thread(executor.execute, c.tool, c.arguments) for c in calls]
+        investigation.budget_used = executor.requests
+        investigation.evidence = build_catalog(executor.records)
+        current = others = None
+        if turn.incident is not None:
+            current = {"incident_id": turn.incident.incident_id, "site_ids": turn.incident.site_ids, "created_at": turn.incident.created_at,
+                       "devices": []}
+            try:
+                summaries = self.services.secured_incidents.list_incidents(turn.principal, IncidentFilter(limit=50))
+                others = [{"incident_id": i.incident_id, "title": i.title, "site_ids": i.site_ids, "created_at": i.created_at,
+                           "devices": i.device_ids} for i in summaries]
+            except Exception:
+                others = []
+        symptoms = " ".join(context.notes[-3:] + context.symptoms + ([turn.incident.title, turn.incident.description] if turn.incident else []))
+        site = next((c.arguments["site_id"] for c in calls if c.arguments.get("site_id")), None)
+        report = await run_in_threadpool(protocol_analyze, context.scenario_id, None if "all" in engines else engines, site, None, symptoms,
+                                         current, others)
+        investigation.protocol = report.model_dump(mode="json")
+        self.close_investigation(turn, investigation, "completed" if all(r.succeeded for r in records) else "partial")
+        evidence_of = {}
+        for item in investigation.evidence:
+            evidence_of.setdefault((item.code, item.device_id), item.evidence_id)
+            evidence_of.setdefault((item.code, None), item.evidence_id)
+        cite = {f.finding_id: evidence_of.get((f.code, f.device_id)) or evidence_of.get((f.code, None)) for f in report.findings}
+        template = self.protocol_reply(report, cite, names, where)
+        facts = self.facts(turn, "protocol_check", tools_ran_this_turn=True, protocol={
+            "headline": report.headline, "counts": report.counts, "synthetic": True,
+            "findings": [{"id": f.finding_id, "evidence_id": cite.get(f.finding_id), "code": f.code, "status": f.status, "title": f.title,
+                          "device": f.device_id, "sites": f.affected_sites, "confidence": f.confidence, "hosts": f.hosts[:3]} for f in report.findings[:12]]})
+        facts["evidence_ids"] = sorted(set(facts["evidence_ids"]) | {i.evidence_id for i in investigation.evidence})
+        actions = []
+        lead = next((f for f in report.findings if f.finding_id in (report.root_causes[:1] or report.threats[:1])), None)
+        if lead is not None and cite.get(lead.finding_id):
+            actions.append(act("explain_evidence", f"Explain {cite[lead.finding_id]}", {"evidence_ids": [cite[lead.finding_id]]}))
+        if any(f.commands for f in report.findings):
+            actions.append(reply("Show me the commands"))
+        for check in report.next_checks[:2]:
+            next_calls = self.protocol_calls(turn, [check.engine])
+            actions.append(self.protocol_action(f"Also check {PROTOCOL_SHORT.get(check.engine, check.engine)}", next_calls))
+        refs = [reference(i, investigation.investigation_id) for i in investigation.evidence[:6]]
+        return Outcome(template=template, details=self.protocol_details(report, cite), facts=facts, investigation=investigation,
+                       evidence=refs, use_model=False, result_by="rule_based", actions=actions,
+                       attachments=[Attachment(kind="protocol", title=f"{names[:1].upper() + names[1:]} check{'s' if len(engines) > 1 else ''}",
+                                               data=self.protocol_card(report, cite))])
+
+    @staticmethod
+    def protocol_reply(report, cite: dict[str, str | None], names: str, where: str) -> str:
+        by_id = {f.finding_id: f for f in report.findings}
+
+        def tag(finding) -> str:
+            evidence = cite.get(finding.finding_id)
+            return f" ({evidence})" if evidence else ""
+
+        if report.root_causes:
+            lead = by_id[report.root_causes[0]]
+            word = PROTOCOL_STATUS[lead.status]
+            evidence = f", {cite[lead.finding_id]}" if cite.get(lead.finding_id) else ""
+            explained = f" It also explains {len(lead.explains)} other finding{'s' if len(lead.explains) != 1 else ''}." if lead.explains else ""
+            return (f"Found it: **{lead.title}** ({word}, {lead.confidence_label} confidence{evidence}).{explained} "
+                    "Want the evidence or the read-only commands?")
+        if report.threats:
+            lead = by_id[report.threats[0]]
+            return (f"**{lead.title}**{tag(lead)}: {lead.facts.get('likelihood', 'possible')} on {len(lead.facts.get('sources', []))} independent "
+                    "sources, but not confirmed. An analyst should review it; the data says nothing about who is behind it. Want the details?")
+        confirmed = [f for f in report.findings if f.status == "confirmed_fault"]
+        if confirmed:
+            lead = confirmed[0]
+            core = next((c.detail for c in lead.correlations if c.kind == "core_evidence"), None)
+            if core is None and any(x.startswith("core:") for x in lead.explained_by):
+                change = next((c.detail for c in lead.correlations if c.kind == "config_change"), None)
+                core = f"It follows a {change[0].lower() + change[1:]}" if change else None
+            if core:
+                return f"**{lead.title}**{tag(lead)}, but that's an effect rather than the cause. {core.split(': ')[0]}."
+            return f"**{lead.title}** (confirmed){tag(lead)}. Want the details?"
+        suspicious = [f for f in report.findings if f.status == "suspicious_indicator"]
+        if suspicious:
+            lead = suspicious[0]
+            return f"**{lead.title}**{tag(lead)}: suspicious, not confirmed. Want the details?"
+        possible = [f for f in report.findings if f.status == "possible_explanation"]
+        if possible:
+            return f"Nothing confirmed. Possible: **{possible[0].title}**{tag(possible[0])}. Want the details?"
+        missing = [f for f in report.findings if f.status == "insufficient_evidence"]
+        if missing and len(missing) >= len(report.engines):
+            return f"I couldn't check {names} for {where}: {missing[0].summary.rstrip('.')}."
+        suppressed = " ".join(n for n in report.notes if n.startswith("Suppressed"))
+        kinds = [k for k, word in (("the vulnerability scanner", "scanner"), ("the admin jump host", "jump host"), ("backups", "backup"))
+                 if word in suppressed]
+        return (f"The {names} check{'s' if ' and ' in names or names.startswith('protocol') else ''} found nothing wrong for {where}."
+                + (f" Authorised activity from {' and '.join(kinds)} was recognised and not flagged." if kinds else "")
+                + (" Some data was missing, so this isn't a full all-clear." if missing else ""))
+
+    @staticmethod
+    def protocol_details(report, cite: dict[str, str | None]) -> str:
+        lines = [f"**{report.headline}**", ""]
+        for f in report.findings:
+            if f.status == "insufficient_evidence":
+                continue
+            label = PROTOCOL_STATUS[f.status].capitalize()
+            confidence = f", {f.confidence_label} {f.confidence:.2f}" if f.confidence is not None else ""
+            lines.append(f"- [{label}{confidence}] {f.title}{f' ({cite[f.finding_id]})' if cite.get(f.finding_id) else ''}: {f.summary}")
+            for correlation in f.correlations[:2]:
+                lines.append(f"  - {correlation.detail}")
+        gaps = [f for f in report.findings if f.status == "insufficient_evidence"]
+        if gaps:
+            lines.append("Not enough data: " + "; ".join(f"{f.title}" for f in gaps[:4]) + ".")
+        if report.notes:
+            lines.append("Notes: " + " ".join(report.notes[:4]))
+        if report.causal_chain and len(report.causal_chain) > 1:
+            by_id = {f.finding_id: f for f in report.findings}
+            lines.append("Chain: " + " → ".join(by_id[x].title for x in report.causal_chain if x in by_id) + ".")
+        lines.append("Read-only checks on synthetic telemetry; nothing was changed and no device was contacted.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def protocol_card(report, cite: dict[str, str | None]) -> dict[str, Any]:
+        return {"headline": report.headline, "synthetic": True, "counts": report.counts, "root_causes": report.root_causes,
+                "threats": report.threats, "causal_chain": report.causal_chain, "notes": report.notes[:5], "missing": report.missing[:4],
+                "hypotheses": [h.model_dump() for h in report.hypotheses],
+                "engines": [{"engine": e.engine, "title": e.title, "status": e.status} for e in report.engines],
+                "next_checks": [c.model_dump() for c in report.next_checks],
+                "findings": [{"finding_id": f.finding_id, "evidence_id": cite.get(f.finding_id), "engine": f.engine, "code": f.code,
+                              "status": f.status, "severity": f.severity, "title": f.title, "summary": f.summary, "basis": f.basis,
+                              "confidence": f.confidence, "confidence_label": f.confidence_label, "device_id": f.device_id,
+                              "affected_sites": f.affected_sites, "root_cause": f.root_cause, "explained_by": f.explained_by,
+                              "correlations": [c.detail for c in f.correlations[:4]], "commands": [c.model_dump() for c in f.commands[:3]],
+                              "evidence": [r.model_dump(mode="json") for r in f.evidence[:4]], "injection_ignored": f.injection_ignored}
+                             for f in report.findings[:20]]}
+
+    @staticmethod
+    def after_protocol_check(turn: Turn) -> bool:
+        """True when the most recent investigation in this conversation was a protocol check."""
+        latest = next(reversed(turn.state.investigations.values()), None) if turn.state.investigations else None
+        return latest is not None and latest.kind == "protocol_check" and bool(latest.protocol)
+
+    def protocol_commands(self, turn: Turn) -> list[dict[str, Any]]:
+        latest = next((i for i in reversed(turn.state.investigations.values()) if i.kind == "protocol_check" and i.protocol), None)
+        if latest is None:
+            return []
+        findings = latest.protocol["findings"]
+        ordered = [f for f in findings if f["finding_id"] in latest.protocol["root_causes"] + latest.protocol["threats"]]
+        ordered += [f for f in findings if f not in ordered and f["status"] != "insufficient_evidence"]
+        commands = []
+        for finding in ordered:
+            for c in finding["commands"]:
+                commands.append({"device_id": c["device_id"], "command": c["command"], "platform": c["platform"], "purpose": c["purpose"],
+                                 "expected_healthy": c["healthy"], "expected_fault": c["faulty"],
+                                 "if_fault": f"That confirms {finding['title'].lower()[:1] + finding['title'][1:]}.",
+                                 "if_healthy": "Recollect the telemetry; the finding may have cleared.", "domain": finding["engine"],
+                                 "tool_equivalent": None})
+        unique = {(c["device_id"], c["command"]): c for c in commands}
+        return list(unique.values())[:6]
 
     # ---------- human-approved write ----------
 

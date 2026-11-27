@@ -222,11 +222,13 @@ export type Investigation = S["Investigation"];
 export type InvestigationSummary = S["InvestigationSummary"];
 
 export type QuickActionBody = {
-  kind: "full_diagnosis" | "targeted_check" | "explain_evidence" | "status";
+  kind: "full_diagnosis" | "targeted_check" | "explain_evidence" | "status" | "run_plan" | "multi_agent" | "protocol";
   tool?: string;
   arguments?: Record<string, unknown>;
   evidence_ids?: string[];
+  calls?: { tool: string; arguments: Record<string, unknown> }[];
   label?: string;
 };
+export type GeneratedBy = S["GeneratedBy"];
 
 export type MessageBody = { content?: string; action?: QuickActionBody; stream?: boolean };

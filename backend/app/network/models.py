@@ -211,6 +211,9 @@ class IncidentCategory(str, Enum):
     DNS_RESOLUTION_FAILURE = "dns_resolution_failure"
     VLAN_AUTHENTICATION_FAILURE = "vlan_authentication_failure"
     SHARED_DEVICE_FAILURE = "shared_device_failure"
+    PROTOCOL_FAULT = "protocol_fault"
+    PERFORMANCE_DEGRADATION = "performance_degradation"
+    SECURITY_THREAT = "security_threat"
 
 
 class IncidentPriority(str, Enum):

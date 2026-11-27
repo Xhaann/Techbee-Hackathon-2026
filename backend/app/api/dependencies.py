@@ -1,4 +1,6 @@
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import cached_property
 from pathlib import Path
 from typing import Annotated
@@ -15,8 +17,8 @@ from app.engine.providers import ChatCompletionsProvider, ProviderError, build_p
 from app.incidents import IncidentService, build_incident_service
 from app.knowledge import KnowledgeService
 from app.network.models import Identifier
-from app.network.repository import list_scenario_ids
-from app.security.api import ConcurrencyLimiter
+from app.network.repository import scenario_exists
+from app.security.api import ConcurrencyLimiter, LoginThrottle
 from app.security.permissions import AuthenticationError, Permission, Principal, SecuredIncidentService, TokenAuthenticator, authorize
 from app.security.tokens import TokenStoreError, load_token_records
 
@@ -24,11 +26,33 @@ MAX_PAGE_SIZE = 100
 MAX_OFFSET = 10_000
 
 
+class InFlight:
+    """Refuses a second concurrent run of the same work (for example two diagnoses of one incident)."""
+
+    def __init__(self) -> None:
+        self.keys: set[str] = set()
+        self.lock = threading.Lock()
+
+    @contextmanager
+    def claim(self, key: str, message: str) -> Iterator[None]:
+        with self.lock:
+            if key in self.keys:
+                raise AppError(message, code="ALREADY_RUNNING", status_code=409)
+            self.keys.add(key)
+        try:
+            yield
+        finally:
+            with self.lock:
+                self.keys.discard(key)
+
+
 class Services:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.agent = AgentResources(settings)
         self.agent_runs = ConcurrencyLimiter(settings.max_concurrent_agent_runs)
+        self.in_flight = InFlight()
+        self.login_throttle = LoginThrottle(settings.login_max_failures, settings.login_lockout_seconds)
         self.token_state: tuple[tuple[int, int] | None, TokenAuthenticator] | None = None
         self.token_lock = threading.Lock()
 
@@ -45,9 +69,16 @@ class Services:
         return KnowledgeService()
 
     @cached_property
+    def observability(self):
+        from app.observability.service import ObservabilityService
+        return ObservabilityService(self.settings)
+
+    @cached_property
     def conversations(self):
         from app.conversation.orchestrator import ConversationService
-        return ConversationService(self)
+        from app.conversation.store import ConversationStore
+        directory = Path(self.settings.conversation_store_dir) if self.settings.conversation_store_dir else None
+        return ConversationService(self, store=ConversationStore(directory=directory))
 
     def shutdown_conversations(self) -> None:
         if "conversations" in self.__dict__:
@@ -81,10 +112,25 @@ class Services:
             raise AppError("The configured AI provider is unavailable", code="AI_PROVIDER_UNAVAILABLE", status_code=503) from None
 
     def diagnosis_engine(self) -> DiagnosisEngine:
-        return DiagnosisEngine(self.provider(), self.knowledge.diagnosis_retriever())
+        return DiagnosisEngine(self.provider(), self.knowledge.diagnosis_retriever(), run_seconds=self.settings.model_run_seconds)
 
-    def advanced_engine(self) -> AdvancedDiagnosisEngine:
-        return AdvancedDiagnosisEngine(self.provider(), self.knowledge, self.incidents)
+    def advanced_engine(self, visible=None) -> AdvancedDiagnosisEngine:
+        return AdvancedDiagnosisEngine(self.provider(), self.knowledge, self.incidents, visible,
+                                       run_seconds=self.settings.model_run_seconds)
+
+    @contextmanager
+    def model_slot(self) -> Iterator[None]:
+        """Holds one of the MAX_CONCURRENT_AGENT_RUNS slots while a model may be called; rule-based runs need none."""
+        if self.settings.ai_provider == "disabled":
+            yield
+            return
+        if not self.agent_runs.acquire():
+            raise AppError("Too many concurrent model-backed runs; try again shortly", code="AGENT_BUSY", status_code=503,
+                           headers={"retry-after": "5"})
+        try:
+            yield
+        finally:
+            self.agent_runs.release()
 
 
 def services(request: Request) -> Services:
@@ -131,7 +177,7 @@ PageDependency = Annotated[Pagination, Depends()]
 
 
 def scenario(scenario_id: Annotated[Identifier, Query(max_length=64)] = "BASELINE") -> str:
-    if scenario_id not in list_scenario_ids():
+    if not scenario_exists(scenario_id):
         raise AppError(f"Unknown scenario '{scenario_id}'", code="NOT_FOUND", status_code=404)
     return scenario_id
 

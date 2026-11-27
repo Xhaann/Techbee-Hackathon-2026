@@ -1,10 +1,12 @@
 import json
+import time
 
 import pytest
 
 from app.diagnostics import common as diagnostics_common
 from app.engine import DiagnosisEngine, RetrievedDocument, build_provider
 from app.engine.instructions import SYSTEM_INSTRUCTIONS
+from app.engine.registry import REGISTRY
 from app.engine.providers import ModelReply, ProviderError, ProviderErrorKind, ToolCallRequest
 from app.engine.schema import Confidence, DiagnosisMethod, DiagnosisStatus, FaultDomain
 from app.network.repository import load_scenario
@@ -62,7 +64,7 @@ def test_model_orchestrated_diagnosis_is_validated_and_accepted() -> None:
     assert diagnosis.validation_issues == []
     first = provider.calls[0]
     assert first["messages"][0] == {"role": "system", "content": SYSTEM_INSTRUCTIONS}
-    assert len(first["tools"]) == 12
+    assert len(first["tools"]) == 21
     tool_messages = [m for m in provider.calls[2]["messages"] if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tool_messages] == ["call-1", "call-1", "call-2"]
     assert set(diagnosis.fault.supporting_evidence_ids) <= {item.evidence_id for item in diagnosis.evidence}
@@ -153,11 +155,25 @@ def test_code_fenced_json_is_accepted() -> None:
     assert diagnosis.method == DiagnosisMethod.MODEL
 
 
-def test_provider_failure_before_any_evidence() -> None:
+def test_provider_failure_before_any_evidence_falls_back_to_the_rule_planner() -> None:
     diagnosis, _ = run([ProviderError(ProviderErrorKind.TIMEOUT, "Provider did not respond within 30.0s")])
-    assert diagnosis.incident.status == DiagnosisStatus.FAILED
-    assert diagnosis.method == DiagnosisMethod.RULE_BASED_FALLBACK and diagnosis.tool_calls == []
+    assert diagnosis.method == DiagnosisMethod.RULE_BASED_FALLBACK
     assert any("timeout" in item for item in diagnosis.limitations)
+    assert diagnosis.tool_calls and all(c.tool in REGISTRY for c in diagnosis.tool_calls)
+    assert diagnosis.fault.fault_domain == FaultDomain.WAN_ISP
+    assert diagnosis.incident.status == DiagnosisStatus.PARTIAL
+
+
+def test_model_run_deadline_stops_the_loop_and_falls_back() -> None:
+    def slow(index: int):
+        def step(messages, tools):
+            time.sleep(0.15)
+            return tool_call("get_device_logs", {"device_id": "SIN-SW-01", "limit": index + 1}, f"call-{index}")
+        return step
+    diagnosis, provider = run([slow(index) for index in range(12)], run_seconds=0.3)
+    assert 2 <= len(provider.calls) <= 4
+    assert any("exceeded" in item and "seconds" in item for item in diagnosis.limitations)
+    assert diagnosis.method == DiagnosisMethod.RULE_BASED_FALLBACK and diagnosis.fault.fault_domain == FaultDomain.WAN_ISP
 
 
 def test_provider_failure_after_evidence_gives_partial_diagnosis() -> None:
@@ -184,8 +200,9 @@ def test_tool_budget_is_enforced_for_the_model() -> None:
 def test_turn_limit_stops_tool_loops() -> None:
     diagnosis, provider = run([tool_call(*REACH)] * 13)
     assert len(provider.calls) == 12
-    assert [c.status for c in diagnosis.tool_calls].count("duplicate") == 11
+    assert [c.status for c in diagnosis.tool_calls][:12].count("duplicate") == 11
     assert any("within 12 turns" in item for item in diagnosis.limitations)
+    assert diagnosis.method == DiagnosisMethod.RULE_BASED_FALLBACK
 
 
 def test_prompt_injection_in_incident_is_contained() -> None:

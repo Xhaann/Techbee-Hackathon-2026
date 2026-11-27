@@ -80,7 +80,9 @@ def test_reference_conversation_flow(api) -> None:
     calls = diagnostic_calls(diagnosis)
     assert 1 <= len(calls) <= 10 and diagnosis["execution"]["budget_used"] <= diagnosis["execution"]["budget_limit"] == 10
     assert diagnosis["investigation_id"] and diagnosis["evidence_references"]
-    assert "WAN / ISP" in diagnosis["response"] and "hypothesis for a person to review" in diagnosis["response"]
+    assert "WAN link" in diagnosis["response"] and "Nobody has confirmed" in diagnosis["response"]
+    assert "WAN / ISP" in diagnosis["details"] and "LNK-WAN-SIN" in diagnosis["details"]
+    assert "hypothesis for a person to review" in diagnosis["details"] and len(diagnosis["response"].split()) <= 60
     assert {c["action"] for c in diagnosis["human_confirmations"]} == {"attach_investigation", "confirm"}
     assert '"routing_table"' not in diagnosis["response"] and "{" not in diagnosis["response"]
 
@@ -88,7 +90,7 @@ def test_reference_conversation_flow(api) -> None:
     assert explained["intent"]["name"] == "evidence_explanation" and explained["execution"]["tool_calls"] == 0
     assert explained["investigation_id"] is None and "**E1**" in explained["response"]
     assert explained["evidence_references"][0]["investigation_id"] == diagnosis["investigation_id"]
-    assert "didn't re-run" in explained["response"]
+    assert "didn't re-run" in explained["details"]
 
     routing = say(api, cid, "Check SIN-RTR-01 routing")
     assert routing["intent"]["name"] == "targeted_diagnostic"
@@ -112,7 +114,7 @@ def test_repeated_targeted_check_reuses_the_earlier_result(api) -> None:
     first = say(api, cid, "check bgp on SIN-RTR-01")
     assert diagnostic_calls(first) == ["analyze_routing_adjacency"]
     second = say(api, cid, "check bgp on SIN-RTR-01")
-    assert second["execution"]["tool_calls"] == 0 and "already ran this" in second["response"]
+    assert second["execution"]["tool_calls"] == 0 and "earlier check" in second["response"] and "already ran this" in second["details"]
     again = say(api, cid, "check bgp on SIN-RTR-01 again")
     assert diagnostic_calls(again) == ["analyze_routing_adjacency"]
 
@@ -220,7 +222,8 @@ def test_a_second_message_while_a_turn_runs_is_refused(tmp_path: Path) -> None:
     api = model_harness(tmp_path, model)
     with api.client:
         cid = conversation(api, scenario_id="WAN-FAILURE")
-        worker = threading.Thread(target=lambda: say(api, cid, "Hi"))
+        # Greetings are answered without the model, so the turn that holds the conversation is a knowledge question.
+        worker = threading.Thread(target=lambda: say(api, cid, "What's the difference between OSPF and BGP?"))
         worker.start()
         deadline = time.time() + 5
         while api.get(f"/conversations/{cid}", as_="operator").json()["active_turn"] is None and time.time() < deadline:
@@ -356,19 +359,21 @@ def test_streamed_turn_emits_ordered_events_and_replays(api) -> None:
 # ---------- model-backed conversation ----------
 
 def test_model_replies_stream_through_a_toolless_agent(tmp_path: Path) -> None:
-    model = ConversationModel([{"reply": "Hi! I'm following the Singapore incident. What are you seeing?"}])
+    model = ConversationModel([{"reply": "The Singapore WAN link looks down, but nobody has confirmed it yet."}])
     api = model_harness(tmp_path, model)
     with api.client:
         incident = api.diagnosed()
         cid = conversation(api, incident["incident_id"])
-        result = say(api, cid, "Hi")
-        assert result["execution"]["composer"] == "model" and result["response"].startswith("Hi! I'm following")
+        result = say(api, cid, "Explain the current diagnosis")
+        assert result["execution"]["composer"] == "model" and result["response"].startswith("The Singapore WAN link")
         assert result["execution"]["tool_calls"] == 0
         assert len(model.requests) == 1 and model.requests[0]["stream"] is True and "tools" not in model.requests[0]
         deltas = [e for e in events(api, cid) if e["event"] == "assistant.delta"]
         assert "".join(e["data"]["text"] for e in deltas) == result["response"]
         envelope = json.loads(model.requests[0]["messages"][-1]["content"])
-        assert envelope["turn_facts"]["tools_ran_this_turn"] is False
+        assert envelope["ran_checks"] is False and envelope["draft"] and envelope["detail"] == "brief"
+        # The model sees a compact view: no incident description, escalations or full topology paths on every turn.
+        assert incident["description"] not in model.requests[0]["messages"][-1]["content"] and " > " not in json.dumps(envelope)
 
 
 @pytest.mark.parametrize("reply,issue", [
@@ -386,7 +391,7 @@ def test_ungrounded_model_replies_fall_back_to_the_safe_reply(tmp_path: Path, re
     with api.client:
         incident = api.diagnosed()
         cid = conversation(api, incident["incident_id"])
-        result = say(api, cid, "Hi")
+        result = say(api, cid, "Explain the current diagnosis")
         assert result["execution"]["composer"] == "template" and result["response"] != reply
         message = [e for e in events(api, cid) if e["event"] == "assistant.message"][-1]["data"]
         assert message["replaced"] is True and any(issue in text for text in message["composer_issues"])
@@ -414,8 +419,9 @@ def test_full_diagnosis_uses_the_framework_agent_and_falls_back_when_it_fails(tm
         execution = result["execution"]
         assert execution["mode"] == "agent" and execution["model"] == "approved-test-model" and execution["fallback_used"] is True
         assert diagnostic_calls(result)[0] == "check_network_reachability" and execution["budget_used"] <= 10
-        assert len(model.tool_enabled) == 2 and len(model.tool_enabled[0]["tools"]) == 13
-        assert "this result comes from the rule-based planner" in result["response"]
+        assert len(model.tool_enabled) == 2 and len(model.tool_enabled[0]["tools"]) == 22
+        assert "the rule-based diagnosis produced this result" in result["response"]
+        assert result["generated_by"]["result"] == "rule_based_fallback" and "didn't finish" in result["generated_by"]["note"]
 
 
 def test_cancelling_a_running_diagnosis_keeps_partial_evidence(tmp_path: Path) -> None:

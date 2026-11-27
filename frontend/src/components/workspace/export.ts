@@ -15,7 +15,7 @@ export function incidentReport(incident: Incident, advanced?: AdvancedDiagnosis)
     `- Priority: ${PRIORITY_LABEL[incident.priority]} · Severity: ${SEVERITY_LABEL[incident.severity]}`,
     `- Sites: ${incident.site_ids.join(", ")}`,
     `- Opened: ${stamp(incident.created_at, site)} · Updated: ${stamp(incident.updated_at, site)}`,
-    `- Dataset: ${incident.dataset_scenario_id ?? "none"} (synthetic telemetry)`,
+    `- Dataset: ${incident.dataset_scenario_id ?? "none"} (synthetic telemetry)${incident.demo ? " · Demo incident seeded from this scenario" : ""}`,
     "",
     "## Report",
     "",

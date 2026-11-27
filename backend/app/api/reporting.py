@@ -14,6 +14,7 @@ def incident_counts(summaries: list[IncidentSummary]) -> CountSummary:
     return CountSummary(total=len(summaries), counts={
         "status": tally(s.status for s in summaries), "severity": tally(s.severity for s in summaries),
         "priority": tally(s.priority for s in summaries), "fault_domain": tally(s.fault_domain for s in summaries),
+        "origin": tally("demo" if s.demo else "reported" for s in summaries),
     })
 
 

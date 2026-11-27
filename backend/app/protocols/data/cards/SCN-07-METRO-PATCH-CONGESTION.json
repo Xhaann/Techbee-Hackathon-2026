@@ -1,0 +1,169 @@
+{
+  "scenario_id": "SCN-07-METRO-PATCH-CONGESTION",
+  "incident_id": "INC-20260427-407",
+  "title": "Patch push saturates the metro link",
+  "difficulty": [
+    "shared-device",
+    "multi-site",
+    "misleading-evidence",
+    "cascading"
+  ],
+  "capabilities": [
+    "path health",
+    "interface statistics",
+    "capacity",
+    "TCP",
+    "QoS",
+    "MTU",
+    "suspicious traffic",
+    "lateral movement"
+  ],
+  "sites": [
+    "NYC",
+    "SIN",
+    "BLR"
+  ],
+  "unaffected_sites": [],
+  "affected_devices": [
+    "CORE-SW-01",
+    "DC1-FW-01"
+  ],
+  "affected_services": [
+    "application"
+  ],
+  "affected_paths": [
+    "PATH-BLR-APPLICATION",
+    "PATH-NYC-APPLICATION",
+    "PATH-SIN-APPLICATION"
+  ],
+  "timeline": [
+    {
+      "minute": -1.0,
+      "evidence": "events:EVT-S07-001",
+      "what": "Session spike from 10.100.100.50 (patch distribution)"
+    },
+    {
+      "minute": 2.0,
+      "evidence": "events:EVT-S07-002",
+      "what": "Output drops on the metro link (queue full)"
+    }
+  ],
+  "root_cause": "A mis-scheduled patch push from 10.100.100.50 saturates the metro link and WAN egress; congestion, not a physical fault.",
+  "symptoms": [
+    "ERP and file shares slow everywhere",
+    "Calls fine"
+  ],
+  "secondary_effects": [
+    "TCP retransmissions and long round trips",
+    "BULK class drops on WAN egress",
+    "Fragmentation of jumbo transfers"
+  ],
+  "decoys": [
+    {
+      "clue": "The metro fibre had a fault last month",
+      "evidence": [
+        "interface_statistics:CORE-SW-01:Te1/0/4@2026-04-27T09:05:00+00:00"
+      ],
+      "why_misleading": "No CRC or input errors: drops are output queue overflow at 98% utilisation.",
+      "must_not_conclude": [
+        "PHYSICAL_LAYER_DEGRADATION_SUSPECTED"
+      ]
+    },
+    {
+      "clue": "Gigabytes leave 10.100.100.50 to many hosts over SMB",
+      "evidence": [
+        "events:EVT-S07-001"
+      ],
+      "why_misleading": "It is the authorised backup/distribution server on the allowlist.",
+      "must_not_conclude": [
+        "SUSPICIOUS_LARGE_UPLOAD",
+        "LATERAL_ADMIN_FANOUT",
+        "THREAT_CORRELATED_ACTIVITY"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": true,
+    "acceptable_domains": [
+      "shared_infrastructure",
+      "interface_link",
+      "wan_isp"
+    ],
+    "note": "Utilisation and output drops on the metro link are in the core data."
+  },
+  "expected_findings": [
+    {
+      "engine": "qos",
+      "code": "QOS_LINK_SATURATION",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    },
+    {
+      "engine": "tcp",
+      "code": "TCP_RETRANSMISSION_HIGH",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    },
+    {
+      "engine": "tcp",
+      "code": "TCP_RTT_INFLATION",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    },
+    {
+      "engine": "qos",
+      "code": "QOS_CONGESTION_DROPS",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    }
+  ],
+  "acceptable_findings": [
+    "MTU_FRAGMENTATION"
+  ],
+  "forbidden_findings": [
+    "SUSPICIOUS_LARGE_UPLOAD",
+    "LATERAL_ADMIN_FANOUT",
+    "LATERAL_MOVEMENT_CHAIN",
+    "THREAT_CORRELATED_ACTIVITY",
+    "QOS_PRIORITY_DROPS",
+    "QOS_CLASSIFICATION_FAILURE"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [
+    "QOS_LINK_SATURATION"
+  ],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S07-001",
+    "events:EVT-S07-002",
+    "interface_statistics:CORE-SW-01:Te1/0/4@2026-04-27T09:05:00+00:00",
+    "interface_statistics:DC1-FW-01:ethernet1/1@2026-04-27T09:15:00+00:00"
+  ],
+  "configuration": [],
+  "commands": [
+    {
+      "device_id": "CORE-SW-01",
+      "command": "show interfaces Te1/0/4",
+      "expect": "Load near 255/255, output drops, no CRC errors"
+    },
+    {
+      "device_id": "CORE-RTR-01",
+      "command": "show policy-map interface Gi0/0/2 output",
+      "expect": "BULK dropping, VOICE clean"
+    },
+    {
+      "device_id": "DC1-FW-01",
+      "command": "show session info",
+      "expect": "Session spike from 10.100.100.50"
+    }
+  ],
+  "confidence": "Congestion is in the core data and is the cause: link saturation by the bulk transfer. TCP and QoS drop findings are its effects and fragmentation is secondary. The bulk transfer must not raise a security indicator."
+}

@@ -10,12 +10,14 @@ from app.engine.registry import REGISTRY, TOOLS, ToolSpec, tool_schemas
 EXPECTED_TOOLS = {
     "get_topology", "get_device_logs", "get_interface_stats", "get_routing_state", "get_firewall_logs",
     "get_dhcp_dns_status", "check_network_reachability", "analyze_packet_loss", "analyze_interface_errors",
-    "analyze_routing_adjacency", "check_device_availability", "analyze_network_dependencies",
+    "analyze_routing_adjacency", "check_device_availability", "analyze_network_dependencies", "analyze_path_health",
+    "get_event_timeline", "get_change_history", "get_network_health", "get_config_drift", "analyze_traffic_flows",
+    "trace_packet", "forecast_capacity", "analyze_protocol",
 }
 
 
-def test_all_twelve_tools_registered_with_explicit_schemas() -> None:
-    assert set(REGISTRY) == EXPECTED_TOOLS and len(TOOLS) == 12
+def test_all_twenty_tools_registered_with_explicit_schemas() -> None:
+    assert set(REGISTRY) == EXPECTED_TOOLS and len(TOOLS) == 21
     for schema in tool_schemas():
         function = schema["function"]
         parameters = function["parameters"]

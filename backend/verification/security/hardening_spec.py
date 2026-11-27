@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.core.config import Settings
 from app.engine import DiagnosisEngine, diagnose
 from app.engine.executor import MAX_TOOL_CALLS, MAX_TOOL_REQUESTS
+from app.engine.registry import REGISTRY
 from app.engine.safety import is_read_only_command
 from app.engine.schema import DraftCheck, NextCheck
 from app.incidents import IncidentService, IncidentValidationError, JsonIncidentRepository, LifecycleStatus, UnauthorizedActionError
@@ -131,9 +132,10 @@ def test_execution_limits_and_fallback_remain() -> None:
     assert (MAX_TOOL_CALLS, MAX_TOOL_REQUESTS) == (10, 20)
     provider = ScriptedProvider([tool_call("run_shell", {"command": "id"}), tool_call("__import__", {}), final("not json")])
     diagnosis = DiagnosisEngine(provider).diagnose(incident_request("WAN-FAILURE"))
-    assert [c.error_code for c in diagnosis.tool_calls] == ["UNKNOWN_TOOL", "UNKNOWN_TOOL"]
+    assert [c.error_code for c in diagnosis.tool_calls[:2]] == ["UNKNOWN_TOOL", "UNKNOWN_TOOL"]
+    assert all(c.tool in REGISTRY for c in diagnosis.tool_calls[2:])
     assert diagnosis.method.value == "rule_based_fallback" and json.dumps(diagnosis.model_dump(mode="json"))
-    assert diagnosis.incident.status.value == "failed"
+    assert diagnosis.incident.status.value == "partial" and len(diagnosis.tool_calls) <= 2 + MAX_TOOL_CALLS
 
 
 def test_human_only_actions_remain_protected(tmp_path: Path) -> None:

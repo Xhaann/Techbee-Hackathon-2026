@@ -115,6 +115,48 @@ class RateLimiter:
             return None
 
 
+class LoginThrottle:
+    """Refuses further sign-in attempts for a username after repeated failures inside a sliding window."""
+
+    def __init__(self, max_failures: int, window_seconds: float, clock: Callable[[], float] = time.monotonic,
+                 max_keys: int = MAX_TRACKED_CLIENTS) -> None:
+        self.max_failures = max_failures
+        self.window = window_seconds
+        self.clock = clock
+        self.max_keys = max_keys
+        self.failures: OrderedDict[str, deque[float]] = OrderedDict()
+        self.lock = threading.Lock()
+
+    def _recent(self, key: str, now: float) -> deque[float]:
+        hits = self.failures.pop(key, deque())
+        while hits and now - hits[0] >= self.window:
+            hits.popleft()
+        return hits
+
+    def retry_after(self, key: str) -> float | None:
+        with self.lock:
+            now = self.clock()
+            hits = self._recent(key, now)
+            if hits:
+                self.failures[key] = hits
+            if len(hits) >= self.max_failures:
+                return max(0.0, self.window - (now - hits[0]))
+            return None
+
+    def failure(self, key: str) -> None:
+        with self.lock:
+            now = self.clock()
+            hits = self._recent(key, now)
+            hits.append(now)
+            self.failures[key] = hits
+            while len(self.failures) > self.max_keys:
+                self.failures.popitem(last=False)
+
+    def success(self, key: str) -> None:
+        with self.lock:
+            self.failures.pop(key, None)
+
+
 class ConcurrencyLimiter:
     def __init__(self, limit: int) -> None:
         self.limit = limit

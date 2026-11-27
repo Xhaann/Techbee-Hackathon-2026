@@ -66,6 +66,43 @@ class DependencyArguments(ToolArguments):
     device_id: str | None = Field(default=None, max_length=64)
 
 
+class HistoryArguments(ToolArguments):
+    device_id: str | None = Field(default=None, max_length=64)
+    site_id: str | None = Field(default=None, max_length=32)
+    start: Timestamp = None
+    end: Timestamp = None
+    limit: int = Field(default=50, ge=1, le=100)
+
+
+class ScopeArguments(ToolArguments):
+    site_id: str | None = Field(default=None, max_length=32)
+    device_id: str | None = Field(default=None, max_length=64)
+
+
+class TrafficArguments(ToolArguments):
+    site_id: str | None = Field(default=None, max_length=32)
+    service: Literal["application", "internet", "dns", "dhcp", "authentication"] | None = None
+
+
+class PacketArguments(ToolArguments):
+    source: str = Field(min_length=1, max_length=64)
+    destination: str = Field(min_length=1, max_length=64)
+    protocol: Literal["tcp", "udp", "icmp"] = "tcp"
+    port: int | None = Field(default=None, ge=1, le=65535)
+
+
+class ProtocolArguments(ToolArguments):
+    protocol: Literal["bgp", "ospf", "stp", "arp", "vlan", "nat", "ipsec", "tcp", "mtu", "qos", "ipv6", "wireless", "multicast", "tls",
+                      "threats", "traffic", "lateral", "all"]
+    site_id: str | None = Field(default=None, max_length=32)
+    device_id: str | None = Field(default=None, max_length=64)
+
+
+class CapacityArguments(ToolArguments):
+    site_id: str | None = Field(default=None, max_length=32)
+    link_id: str | None = Field(default=None, max_length=64)
+
+
 @dataclass(frozen=True)
 class ToolSpec:
     name: str
@@ -109,6 +146,28 @@ TOOLS = (
              DeviceArguments, diagnostics.check_device_availability, True),
     ToolSpec("analyze_network_dependencies", "Upstream/downstream dependencies, shared devices and failure impact for a site and/or device.",
              DependencyArguments, diagnostics.analyze_network_dependencies, False),
+    ToolSpec("analyze_path_health", "Loss, errors, utilisation and optical/error events on every link of the forward path between two "
+             "endpoints; separates physical degradation from congestion.", ReachabilityArguments, diagnostics.analyze_path_health, True),
+    ToolSpec("get_event_timeline", "State changes over the window for a device or site: link, BGP/OSPF, probe and service outages with "
+             "their recovery times, and routes withdrawn then restored. Finds faults that have already recovered.",
+             HistoryArguments, diagnostics.get_event_timeline, True),
+    ToolSpec("get_change_history", "Configuration, MTU, policy and DNS zone changes plus firewall rule edits, with parsed commands "
+             "(for example DHCP relay helper removal). Device, site or the whole network.", HistoryArguments,
+             diagnostics.get_change_history, True),
+    ToolSpec("get_network_health", "Health scores (0-100) for the network, sites, devices and service paths with the top reasons; "
+             "optional site or device scope.", ScopeArguments, diagnostics.get_network_health, True),
+    ToolSpec("get_config_drift", "Running configuration versus the golden configuration: changed lines with severity and the "
+             "logged change, user and ticket behind each, or none.", ScopeArguments, diagnostics.get_config_drift, True),
+    ToolSpec("analyze_traffic_flows", "NetFlow/IPFIX summary: traffic by application, top talkers, flows dropped by firewall "
+             "policy and traffic that stopped after the incident began.", TrafficArguments, diagnostics.analyze_traffic_flows, True),
+    ToolSpec("trace_packet", "Hop-by-hop packet journey between two endpoints for a protocol and port: routes, firewall rule "
+             "verdicts, link state, latency and path MTU.", PacketArguments, diagnostics.trace_packet, True),
+    ToolSpec("analyze_protocol", "One protocol or security engine over synthetic protocol telemetry: bgp, ospf (LSDB), stp, arp, vlan "
+             "(trunks), nat, ipsec, tcp (retransmissions), mtu, qos, ipv6, wireless, multicast, tls, threats (correlation), traffic "
+             "(suspicious), lateral (movement), or all of them. Findings are labelled confirmed, suspicious, possible or insufficient evidence.",
+             ProtocolArguments, diagnostics.analyze_protocol, True),
+    ToolSpec("forecast_capacity", "Congestion risk and utilisation forecast for links: busy-hour trend, days until 80%/90% and "
+             "drivers; optional site or link.", CapacityArguments, diagnostics.forecast_capacity, True),
 )
 REGISTRY = {tool.name: tool for tool in TOOLS}
 

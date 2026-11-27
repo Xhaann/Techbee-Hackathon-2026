@@ -5,6 +5,7 @@ import pytest
 
 from app import diagnostics
 from app.diagnostics import FindingKind, ToolStatus
+from app.network.repository import list_scenario_ids
 from verification.diagnostics.helpers import failed, ok
 
 SCENARIO_TOOLS = {
@@ -18,18 +19,19 @@ SCENARIO_TOOLS = {
     "analyze_interface_errors": lambda s: diagnostics.analyze_interface_errors(s, "CORE-RTR-01", "Gi0/0/2"),
     "analyze_routing_adjacency": lambda s: diagnostics.analyze_routing_adjacency(s, "CORE-RTR-01"),
     "check_device_availability": lambda s: diagnostics.check_device_availability(s, "CORE-RTR-01"),
+    "analyze_path_health": lambda s: diagnostics.analyze_path_health(s, "NYC-SW-01", "DC1-SRV-APP-01"),
+    "get_event_timeline": lambda s: diagnostics.get_event_timeline(s, device_id="NYC-RTR-01"),
+    "get_change_history": lambda s: diagnostics.get_change_history(s, device_id="NYC-RTR-01"),
 }
 STATIC_TOOLS = {
     "get_topology": lambda: diagnostics.get_topology("NYC"),
     "analyze_network_dependencies": lambda: diagnostics.analyze_network_dependencies(device_id="CORE-RTR-01"),
 }
-SCENARIOS = ["BASELINE", "WAN-FAILURE", "PACKET-LOSS", "OSPF-ADJACENCY-FAILURE", "FIREWALL-BLOCKING",
-             "DHCP-ALLOCATION-FAILURE", "DNS-RESOLUTION-FAILURE", "VLAN-AUTHENTICATION-FAILURE",
-             "SHARED-DEVICE-FAILURE"]
+SCENARIOS = list_scenario_ids()
 
 
-def test_all_twelve_tools_are_exported() -> None:
-    assert len(SCENARIO_TOOLS) + len(STATIC_TOOLS) == 12
+def test_all_fifteen_tools_are_exported() -> None:
+    assert len(SCENARIO_TOOLS) + len(STATIC_TOOLS) == 15
     assert set(SCENARIO_TOOLS) | set(STATIC_TOOLS) <= set(diagnostics.__all__)
 
 

@@ -112,7 +112,84 @@ def reachability(data: dict) -> str:
     return text
 
 
-DIGESTS = {"get_routing_state": routing, "analyze_routing_adjacency": adjacency, "check_device_availability": availability,
+def path_health(data: dict) -> str:
+    segments = data["segments"]
+    unhealthy = [f"{s['link_id']} {s['state']}" for s in segments if s["state"] != "healthy"]
+    return (f"{plural(len(segments), 'link')} on the {data['reachability']} path; "
+            + (", ".join(unhealthy) if unhealthy else "all healthy"))
+
+
+def timeline(data: dict) -> str:
+    intervals = data["intervals"]
+    recovered = [i for i in intervals if i["status"] == "recovered"]
+    ongoing = [i for i in intervals if i["status"] == "ongoing"]
+    parts = [f"{plural(data['events_total'], 'event')} in the window"]
+    if recovered:
+        parts.append(f"{plural(len(recovered), 'outage')} that recovered")
+    if ongoing:
+        parts.append(f"{plural(len(ongoing), 'outage')} still open")
+    if not intervals:
+        parts.append("no outages logged")
+    return "; ".join(parts)
+
+
+def changes(data: dict) -> str:
+    items = data["changes"]
+    if not items:
+        return "no configuration, policy or rule changes recorded"
+    devices = sorted({c["device_id"] for c in items})
+    return f"{plural(data['total'], 'change')} on {', '.join(devices[:4])}" + (f" and {len(devices) - 4} more" if len(devices) > 4 else "")
+
+
+def health_scores(data: dict) -> str:
+    network = data["network"]
+    weak = [f"{s['site_id']} {s['score']:g}" for s in data["sites"] if s["status"] != "healthy"]
+    return f"network {network['score']:g}/100 ({network['status']})" + (f"; weakest: {', '.join(weak[:4])}" if weak else "; every site healthy")
+
+
+def drift(data: dict) -> str:
+    summary = data["summary"]
+    if not summary["items"]:
+        return f"no drift on {plural(summary['devices'], 'device')}" + (f"; {plural(len(data['notes']), 'unverified change')}" if data["notes"] else "")
+    devices = sorted({d["device_id"] for d in data["drift"]})
+    return f"{plural(summary['items'], 'line')} differ from the golden config on {', '.join(devices[:4])}"
+
+
+def traffic(data: dict) -> str:
+    totals = data["totals"]
+    parts = [f"{plural(totals['flows'], 'flow')}"]
+    if totals["dropped_flows"]:
+        parts.append(f"{totals['dropped_flows']} dropped by policy")
+    if data["traffic_shifts"]:
+        parts.append("traffic stopped for " + ", ".join(f"{s['site_id']} {s['service']}" for s in data["traffic_shifts"][:3]))
+    return "; ".join(parts)
+
+
+def journey(data: dict) -> str:
+    request = data["request"]
+    return (f"{request['protocol']}/{request['port'] or 'any'} {data['source']['address']} -> {data['destination']['address']}: "
+            f"{data['verdict'].replace('_', ' ')} at hop {data['verdict_hop']} of {len(data['hops'])}, {data['total_latency_ms']:g} ms")
+
+
+def capacity(data: dict) -> str:
+    risky = [f"{l['link_id']} {l['level']}" for l in data["links"] if l["level"] in ("high", "medium")]
+    return f"{plural(len(data['links']), 'link')} forecast; " + (", ".join(risky[:4]) if risky else "no congestion risk")
+
+
+def protocol(data: dict) -> str:
+    words = {"confirmed_fault": "confirmed", "suspicious_indicator": "suspicious", "possible_explanation": "possible",
+             "insufficient_evidence": "not enough data"}
+    findings = [f for f in data["findings"] if f["status"] != "insufficient_evidence"]
+    if not findings:
+        return f"{data['title']}: nothing wrong found" if data["status"] == "healthy" else f"{data['title']}: {data['status']}"
+    lead = findings[0]
+    more = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
+    return f"{data['title']}: {lead['title']} ({words[lead['status']]}){more}"
+
+
+DIGESTS = {"get_network_health": health_scores, "analyze_protocol": protocol, "get_config_drift": drift, "analyze_traffic_flows": traffic,
+           "trace_packet": journey, "forecast_capacity": capacity, "analyze_path_health": path_health, "get_event_timeline": timeline, "get_change_history": changes,
+           "get_routing_state": routing, "analyze_routing_adjacency": adjacency, "check_device_availability": availability,
            "get_interface_stats": interface_stats, "analyze_packet_loss": packet_loss, "analyze_interface_errors": interface_errors,
            "get_device_logs": logs, "get_firewall_logs": firewall, "get_dhcp_dns_status": dhcp_dns, "get_topology": topology,
            "analyze_network_dependencies": dependencies, "check_network_reachability": reachability}

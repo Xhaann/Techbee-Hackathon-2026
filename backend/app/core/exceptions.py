@@ -10,11 +10,13 @@ from app.security.secrets import redact
 
 
 class AppError(Exception):
-    def __init__(self, message: str, code: str = "APPLICATION_ERROR", status_code: int = 400) -> None:
+    def __init__(self, message: str, code: str = "APPLICATION_ERROR", status_code: int = 400,
+                 headers: dict[str, str] | None = None) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.status_code = status_code
+        self.headers = headers
 
 
 def error_response(
@@ -40,7 +42,7 @@ def status_code_name(status_code: int) -> str:
 
 
 async def handle_app_error(request: Request, exc: AppError) -> JSONResponse:
-    return error_response(exc.status_code, exc.code, exc.message)
+    return error_response(exc.status_code, exc.code, exc.message, headers=getattr(exc, "headers", None))
 
 
 async def handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:

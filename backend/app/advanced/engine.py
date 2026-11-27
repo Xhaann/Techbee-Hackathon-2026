@@ -10,12 +10,13 @@ from app.advanced.paths import analyze_paths
 from app.advanced.schema import AdvancedDiagnosis, AdvancedRequest, CandidateStatus, GuidanceReference
 from app.engine import DiagnosisEngine
 from app.engine.evidence import build_catalog
+from app.engine.engine import DEFAULT_MODEL_RUN_SECONDS
 from app.engine.executor import MAX_TOOL_CALLS, ToolCallRecord, ToolExecutor
 from app.engine.providers import ModelProvider
 from app.engine.safety import is_read_only_command
 from app.engine.schema import Diagnosis, NextCheck
 from app.incidents.models import Actor, Incident, ImpactBasis
-from app.incidents.service import AssetUpdate, IncidentService
+from app.incidents.service import AssetUpdate, IncidentService, Visibility
 from app.knowledge.service import KnowledgeService
 from app.network.models import DeviceType
 from app.network.repository import load_topology
@@ -25,16 +26,20 @@ MAX_NEXT_CHECKS = 12
 
 class AdvancedDiagnosisEngine:
     def __init__(self, provider: ModelProvider | None = None, knowledge: KnowledgeService | None = None,
-                 incidents: IncidentService | None = None) -> None:
+                 incidents: IncidentService | None = None, visible: Visibility = None,
+                 run_seconds: float = DEFAULT_MODEL_RUN_SECONDS) -> None:
         self.provider = provider
+        self.run_seconds = run_seconds
         self.knowledge = knowledge
         self.incidents = incidents
+        self.visible = visible
         self.topology = load_topology()
         self.devices = {device.device_id: device for device in self.topology.devices}
 
     def supplement(self, scenario_id: str, diagnosis: Diagnosis, records: list[ToolCallRecord], extra: int) -> list[ToolCallRecord]:
         executed = [record for record in records if record.status in ("executed", "failed")]
-        executor = ToolExecutor(scenario_id, max_calls=min(MAX_TOOL_CALLS, len(executed) + extra))
+        executor = ToolExecutor(scenario_id, max_calls=min(MAX_TOOL_CALLS, len(executed) + extra),
+                                evidence_offset=records[0].evidence_base if records else 0)
         executor.records = list(records)
         executor.requests = len(records)
         executor.seen = {json.dumps([r.tool, r.arguments], sort_keys=True): r.call_id for r in executed}
@@ -65,7 +70,8 @@ class AdvancedDiagnosisEngine:
     def analyze(self, request: AdvancedRequest) -> AdvancedDiagnosis:
         incident = self.incidents.get_incident(request.incident_id) if self.incidents and request.incident_id else None
         retriever = self.knowledge.diagnosis_retriever() if self.knowledge else None
-        diagnosis, base_records = DiagnosisEngine(self.provider, retriever).diagnose_with_records(request.diagnosis)
+        diagnosis, base_records = DiagnosisEngine(self.provider, retriever, run_seconds=self.run_seconds).diagnose_with_records(
+            request.diagnosis)
         records = self.supplement(request.diagnosis.scenario_id, diagnosis, base_records, request.supplementary_tool_calls)
         supplementary = records[len(base_records):]
         catalog = build_catalog(records)
@@ -83,7 +89,7 @@ class AdvancedDiagnosisEngine:
         path_devices = {hop.device_id for analysis in paths for hop in analysis.hops}
         changes = correlate_changes(ChangeHistory(request.diagnosis.scenario_id), onset_of(diagnosis), diagnosis, catalog, roles,
                                     path_devices)
-        history = compare_history(self.incidents, request.incident_id if incident else None)
+        history = compare_history(self.incidents, request.incident_id if incident else None, self.visible)
         anomalies = detect_anomalies(records)
         playbooks = [GuidanceReference(record_id=m.record_id, title=m.title, match_type=m.match_type.value, reasons=m.reasons)
                      for m in (assessment.matches if assessment else [])][:5]

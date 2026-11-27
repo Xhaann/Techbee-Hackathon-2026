@@ -1,4 +1,4 @@
-// One function per backend operation (52 operations under /api/v1 plus /health).
+// One function per backend operation (52 operations under /api/v1 plus /health); the observability operations are in observability.ts.
 import { del, get, openStream, patch, post } from "./client";
 import type {
   LoginRequest,
@@ -62,6 +62,8 @@ export const api = {
     verify: (token?: string, baseUrl?: string) => post<PrincipalView>("/auth/verify", undefined, { token, baseUrl }),
     // token: "" sends no Authorization header and keeps a 401 here from ending another session.
     login: (body: LoginRequest, baseUrl?: string) => post<LoginResponse>("/auth/login", body, { token: "", baseUrl }),
+    // Revokes the presented token. Passing it explicitly keeps a 401 here from re-triggering sign-out.
+    logout: (token: string) => post<void>("/auth/logout", undefined, { token }),
   },
 
   dashboard: {

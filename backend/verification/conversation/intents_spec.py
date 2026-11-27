@@ -14,7 +14,7 @@ BLANK = ConversationContext(scenario_id="WAN-FAILURE")
     ("Hi", Intent.GREETING), ("hello again", Intent.GREETING), ("Good morning team!", Intent.GREETING),
     ("how are you?", Intent.GREETING), ("thanks!", Intent.GENERAL), ("blah blah", Intent.GENERAL),
     ("what can you do?", Intent.CAPABILITIES), ("help", Intent.CAPABILITIES),
-    ("What is OSPF?", Intent.KNOWLEDGE), ("How do I troubleshoot packet loss?", Intent.KNOWLEDGE),
+    ("What is OSPF?", Intent.KNOWLEDGE), ("How do I troubleshoot packet loss?", Intent.TROUBLESHOOTING),
     ("show me the runbook for a WAN failure", Intent.KNOWLEDGE),
     ("What's the severity?", Intent.INCIDENT_QUERY), ("what's wrong?", Intent.INCIDENT_QUERY),
     ("Singapore users are experiencing slow internet.", Intent.SYMPTOM_REPORT), ("SIN-RTR-01 is down", Intent.SYMPTOM_REPORT),
@@ -30,6 +30,10 @@ BLANK = ConversationContext(scenario_id="WAN-FAILURE")
 ])
 def test_intents(text: str, intent: Intent) -> None:
     assert classify(text, INCIDENT, topology_index()).intent == intent
+
+
+def test_generic_troubleshooting_questions_without_context_stay_knowledge() -> None:
+    assert classify("How do I troubleshoot packet loss?", ConversationContext(), topology_index()).intent == Intent.KNOWLEDGE
 
 
 @pytest.mark.parametrize("text", ["Hi", "thanks", "What is OSPF?", "Singapore users are experiencing slow internet.", "What does E1 mean?",

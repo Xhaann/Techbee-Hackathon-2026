@@ -29,6 +29,15 @@ FAILURE_SCENARIOS = {
     "VLAN-AUTHENTICATION-FAILURE": IncidentCategory.VLAN_AUTHENTICATION_FAILURE,
     "SHARED-DEVICE-FAILURE": IncidentCategory.SHARED_DEVICE_FAILURE,
 }
+ADVANCED_SCENARIOS = {
+    "ADV-NYC-WAN-FLAP": IncidentCategory.WAN_CONNECTIVITY_FAILURE,
+    "ADV-SIN-ERP-SUBNET-BLOCK": IncidentCategory.FIREWALL_BLOCKING,
+    "ADV-BLR-OSPF-AUTH-MISMATCH": IncidentCategory.OSPF_ADJACENCY_FAILURE,
+    "ADV-DNS-SECONDARY-ZONE-EXPIRED": IncidentCategory.DNS_RESOLUTION_FAILURE,
+    "ADV-METRO-FIBRE-DEGRADATION": IncidentCategory.PACKET_LOSS,
+    "ADV-NYC-VOICE-DHCP-RELAY": IncidentCategory.DHCP_ALLOCATION_FAILURE,
+    "ADV-SIN-RADIUS-UDP-BLOCK": IncidentCategory.VLAN_AUTHENTICATION_FAILURE,
+}
 SITE_NETWORKS = {"NYC": IPv4Network("10.10.0.0/16"), "SIN": IPv4Network("10.20.0.0/16"), "BLR": IPv4Network("10.30.0.0/16")}
 APP_SERVER_IP = IPv4Address("10.100.100.40")
 
@@ -55,8 +64,8 @@ def table(dataset: ScenarioDataset, device_id: str) -> dict:
 
 
 def test_all_scenarios_present(scenarios: dict[str, ScenarioDataset]) -> None:
-    assert set(scenarios) == {"BASELINE", *FAILURE_SCENARIOS}
-    for scenario_id, category in FAILURE_SCENARIOS.items():
+    assert set(scenarios) == {"BASELINE", *FAILURE_SCENARIOS, *ADVANCED_SCENARIOS}
+    for scenario_id, category in (FAILURE_SCENARIOS | ADVANCED_SCENARIOS).items():
         dataset = scenarios[scenario_id]
         assert dataset.scenario.category == category
         assert dataset.incident.category == category

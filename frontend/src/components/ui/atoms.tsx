@@ -46,6 +46,18 @@ export function Pill({ tone = "muted", dot, children, className }: { tone?: Tone
   );
 }
 
+/** Marks an incident seeded from a synthetic demo scenario, so it is never mistaken for a reported one. */
+export function DemoTag({ className }: { className?: string }) {
+  return (
+    <span
+      title="Demo incident seeded from a synthetic scenario"
+      className={cn("inline-flex h-[18px] shrink-0 items-center rounded-[5px] bg-hover px-1.5 text-[11px] font-medium text-ink-3", className)}
+    >
+      Demo
+    </span>
+  );
+}
+
 export function toneText(tone: Tone) {
   return TONE_TEXT[tone];
 }

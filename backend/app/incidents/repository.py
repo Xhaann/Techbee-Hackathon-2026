@@ -3,6 +3,7 @@ import os
 import re
 import tempfile
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
@@ -33,7 +34,7 @@ class IncidentRepository(Protocol):
 
     def save(self, incident: Incident) -> None: ...
 
-    def query(self, criteria: IncidentFilter) -> list[IncidentSummary]: ...
+    def query(self, criteria: IncidentFilter, visible: Callable[[IncidentSummary], bool] | None = None) -> list[IncidentSummary]: ...
 
 
 def matches(summary: IncidentSummary, criteria: IncidentFilter) -> bool:
@@ -148,8 +149,9 @@ class JsonIncidentRepository:
                 raise IncidentIntegrityError("Incident creation time cannot be modified")
             self.write(incident)
 
-    def query(self, criteria: IncidentFilter) -> list[IncidentSummary]:
+    def query(self, criteria: IncidentFilter, visible: Callable[[IncidentSummary], bool] | None = None) -> list[IncidentSummary]:
         with self.lock:
-            selected = [summary for summary in self.index.values() if matches(summary, criteria)]
+            selected = [summary for summary in self.index.values()
+                        if matches(summary, criteria) and (visible is None or visible(summary))]
         selected.sort(key=lambda summary: (summary.created_at, summary.incident_id), reverse=True)
         return selected[:criteria.limit]

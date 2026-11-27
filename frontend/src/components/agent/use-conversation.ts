@@ -32,7 +32,7 @@ export type LiveTool = {
 
 export type LiveInvestigation = {
   id: string;
-  kind: "full_diagnosis" | "targeted_check";
+  kind: "full_diagnosis" | "targeted_check" | "multi_agent" | "protocol_check";
   mode: string;
   model?: string | null;
   budgetLimit: number;

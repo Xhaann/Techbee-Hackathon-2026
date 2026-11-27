@@ -24,6 +24,7 @@ class ToolCallRecord:
     error_code: str | None = None
     error: str | None = None
     duplicate_of: str | None = None
+    evidence_base: int = 0
 
     @property
     def succeeded(self) -> bool:
@@ -74,8 +75,10 @@ class ToolExecutor:
             return None
 
     def __init__(self, scenario_id: str, registry: dict[str, ToolSpec] = REGISTRY, max_calls: int = MAX_TOOL_CALLS,
-                 observer: ToolObserver | None = None, cancel_event: threading.Event | None = None) -> None:
+                 observer: ToolObserver | None = None, cancel_event: threading.Event | None = None,
+                 evidence_offset: int = 0) -> None:
         self.scenario_id = scenario_id
+        self.evidence_offset = evidence_offset
         self.registry = registry
         self.max_calls = max_calls
         self.records: list[ToolCallRecord] = []
@@ -93,6 +96,7 @@ class ToolExecutor:
             pass  # Progress reporting must never change what a tool call does.
 
     def append(self, record: ToolCallRecord) -> ToolCallRecord:
+        record.evidence_base = self.evidence_offset
         self.records.append(record)
         self.notify("finished", record)
         return record

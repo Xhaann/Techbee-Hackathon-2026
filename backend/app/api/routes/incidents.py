@@ -85,9 +85,11 @@ def run_diagnosis(incident_id: IncidentPath, request: VersionedRequest, principa
     secured = registry.secured_incidents
     authorize(principal, Permission.RUN_DIAGNOSTICS)
     incident = current(secured, principal, incident_id, request.expected_version)
-    diagnosis = registry.diagnosis_engine().diagnose(IncidentService.diagnosis_request(incident))
-    with expected(secured, principal, incident_id, request.expected_version):
-        return secured.associate_diagnosis(principal, incident_id, diagnosis)
+    with registry.in_flight.claim(f"diagnosis:{incident_id}", f"A diagnosis of {incident_id} is already running"), \
+            registry.model_slot():
+        diagnosis = registry.diagnosis_engine().diagnose(IncidentService.diagnosis_request(incident))
+        with expected(secured, principal, incident_id, request.expected_version):
+            return secured.associate_diagnosis(principal, incident_id, diagnosis)
 
 
 @router.post("/{incident_id}/classification", response_model=Incident)

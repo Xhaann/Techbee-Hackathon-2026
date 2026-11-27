@@ -44,7 +44,7 @@ def test_agent_endpoint_runs_the_framework_agent(tmp_path: Path) -> None:
     assert report["fault_domain"] == "wan_isp" and report["affected_site"] == ["SIN"] and report["human_review_required"] is True
     assert report["knowledge_guidance"] and report["verified_facts"] and report["discrepancies"] == []
     assert all(is_read_only_command(check["command"]) for check in report["recommended_next_checks"])
-    assert len(model.requests) == 4 and len(model.requests[0]["tools"]) == 13
+    assert len(model.requests) == 4 and len(model.requests[0]["tools"]) == 22
     assert FAKE_KEY not in response.text and "untrusted_incident" not in response.text
 
 

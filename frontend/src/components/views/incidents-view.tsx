@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Topbar } from "@/components/shell/topbar";
-import { Dot, ErrorNote, Pill, Skeleton } from "@/components/ui/atoms";
+import { DemoTag, Dot, ErrorNote, Pill, Skeleton } from "@/components/ui/atoms";
 import { StatBar } from "@/components/ui/charts";
 import { ALL, SelectBox } from "@/components/ui/fields";
 import { describeError } from "@/lib/api/client";
@@ -25,6 +25,11 @@ import {
 import { ago, stamp } from "@/lib/time";
 
 const PAGE = 25;
+
+function onRecord(total: number, demo: number) {
+  const base = `${total} incident${total === 1 ? "" : "s"} on record`;
+  return demo > 0 ? `${base}, ${demo} of them demo` : base;
+}
 
 export function IncidentsView() {
   const can = useCan();
@@ -79,7 +84,7 @@ export function IncidentsView() {
         <div className="mx-auto w-full max-w-[1120px] space-y-5 px-5 pt-6 pb-16 md:px-8">
           <StatBar
             loading={summary.isPending}
-            comparison={summary.data ? `${summary.data.total} incidents on record` : undefined}
+            comparison={summary.data ? onRecord(summary.data.total, summary.data.counts.origin?.demo ?? 0) : undefined}
             stats={[
               { key: "active", label: "Active", value: summary.data ? active : undefined },
               { key: "new", label: "Waiting to be acknowledged", value: summary.data ? (counts.new ?? 0) : undefined, tone: "amber" },
@@ -166,7 +171,10 @@ export function IncidentsView() {
                         <Link href={`/diagnose/${incident.incident_id}`} className="block truncate font-medium text-ink hover:underline">
                           {incident.title}
                         </Link>
-                        <span className="mt-0.5 block font-mono text-[11px] text-ink-3">{incident.incident_id}</span>
+                        <span className="mt-0.5 flex items-center gap-1.5">
+                          <span className="font-mono text-[11px] text-ink-3">{incident.incident_id}</span>
+                          {incident.demo ? <DemoTag /> : null}
+                        </span>
                       </td>
                       <td className="px-3 py-3">
                         <Pill tone={severityTone(incident.severity)} dot>

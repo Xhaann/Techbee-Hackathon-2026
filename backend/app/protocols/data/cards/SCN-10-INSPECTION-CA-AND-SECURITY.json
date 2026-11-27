@@ -1,0 +1,152 @@
+{
+  "scenario_id": "SCN-10-INSPECTION-CA-AND-SECURITY",
+  "incident_id": "INC-20260430-410",
+  "title": "Inspection CA, scanner and password spraying",
+  "difficulty": [
+    "multiple-symptoms",
+    "multi-site",
+    "security-uncertainty",
+    "misleading-evidence"
+  ],
+  "capabilities": [
+    "TLS",
+    "suspicious traffic",
+    "lateral movement",
+    "threat correlation",
+    "firewall"
+  ],
+  "sites": [
+    "NYC",
+    "SIN",
+    "BLR"
+  ],
+  "unaffected_sites": [],
+  "affected_devices": [
+    "CORE-FW-01"
+  ],
+  "affected_services": [
+    "internet"
+  ],
+  "affected_paths": [
+    "PATH-BLR-INTERNET",
+    "PATH-NYC-INTERNET",
+    "PATH-SIN-INTERNET"
+  ],
+  "timeline": [
+    {
+      "minute": -12.0,
+      "evidence": "events:EVT-S10-001",
+      "what": "Inspection certificate changed to 'Corp Inspection CA 2027'"
+    },
+    {
+      "minute": -9.0,
+      "evidence": "ids_alerts:IDS-S10-01",
+      "what": "Port sweep from 10.100.100.61"
+    },
+    {
+      "minute": 3.0,
+      "evidence": "ids_alerts:IDS-S10-02",
+      "what": "Password spraying from a Bengaluru desktop"
+    }
+  ],
+  "root_cause": "New inspection CA not trusted by clients; separately an unregistered scanner and a spraying desktop.",
+  "symptoms": [
+    "Certificate warnings on external sites at every office",
+    "ERP fine"
+  ],
+  "secondary_effects": [
+    "IDS alerts"
+  ],
+  "decoys": [
+    {
+      "clue": "Port sweep from a data-centre address",
+      "evidence": [
+        "ids_alerts:IDS-S10-01"
+      ],
+      "why_misleading": "It is IT's new scanner, not yet allowlisted: suspicious from the data alone, and it must not be merged with the Bengaluru desktop's activity.",
+      "must_not_conclude": [
+        "confirmed attack"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": false,
+    "acceptable_domains": [
+      "firewall"
+    ],
+    "note": "TLS handshakes and security telemetry are not in the core data."
+  },
+  "expected_findings": [
+    {
+      "engine": "tls",
+      "code": "TLS_INSPECTION_UNTRUSTED",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    },
+    {
+      "engine": "traffic",
+      "code": "SUSPICIOUS_PORT_SCAN",
+      "status": "suspicious_indicator",
+      "role": "indicator",
+      "min_confidence": null,
+      "max_confidence": 0.85
+    },
+    {
+      "engine": "lateral",
+      "code": "LATERAL_CREDENTIAL_SPRAY",
+      "status": "suspicious_indicator",
+      "role": "indicator",
+      "min_confidence": null,
+      "max_confidence": 0.85
+    },
+    {
+      "engine": "threats",
+      "code": "THREAT_CORRELATED_ACTIVITY",
+      "status": "suspicious_indicator",
+      "role": "indicator",
+      "min_confidence": null,
+      "max_confidence": 0.85
+    }
+  ],
+  "acceptable_findings": [],
+  "forbidden_findings": [
+    "TLS_CERTIFICATE_EXPIRED",
+    "TLS_UNEXPECTED_CERTIFICATE",
+    "LATERAL_ADMIN_FANOUT",
+    "LATERAL_MOVEMENT_CHAIN"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [
+    "TLS_INSPECTION_UNTRUSTED"
+  ],
+  "threat_hosts": [
+    "10.100.100.61",
+    "10.30.10.103"
+  ],
+  "evidence": [
+    "events:EVT-S10-001",
+    "ids_alerts:IDS-S10-01",
+    "ids_alerts:IDS-S10-02"
+  ],
+  "configuration": [],
+  "commands": [
+    {
+      "device_id": "CORE-FW-01",
+      "command": "show system setting ssl-decrypt setting",
+      "expect": "Forward-proxy CA 'Corp Inspection CA 2027'"
+    },
+    {
+      "device_id": "CORE-FW-01",
+      "command": "show log threat",
+      "expect": "Scan and authentication entries"
+    },
+    {
+      "device_id": "BLR-SW-01",
+      "command": "show ip arp 10.30.10.103",
+      "expect": "The spraying desktop's port and MAC"
+    }
+  ],
+  "confidence": "The CA problem is confirmed (at least 0.8). Both security clusters stay suspicious (at most 0.85, never confirmed, no attribution) and separate."
+}

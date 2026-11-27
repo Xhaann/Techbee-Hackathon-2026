@@ -7,6 +7,8 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 TOPOLOGY_FILE = "topology.json"
 SCENARIOS_DIR = "scenarios"
 MAX_DATASET_BYTES = 5_000_000
+# Phase 3 protocol and security scenarios: full datasets kept apart from the core set, which tests and benchmarks enumerate.
+PROTOCOL_SCENARIOS = Path(__file__).resolve().parents[1] / "protocols" / "data" / "scenarios"
 
 
 class DatasetNotFoundError(LookupError):
@@ -29,14 +31,30 @@ def load_topology(data_dir: Path = DATA_DIR) -> NetworkTopology:
 
 
 def list_scenario_ids(data_dir: Path = DATA_DIR) -> list[str]:
+    """The core scenarios. Protocol scenarios are listed separately so existing suites and benchmarks keep their scope."""
     return sorted(path.stem for path in (data_dir / SCENARIOS_DIR).glob("*.json"))
+
+
+def list_protocol_scenario_ids(directory: Path = PROTOCOL_SCENARIOS) -> list[str]:
+    return sorted(path.stem for path in directory.glob("*.json")) if directory.is_dir() else []
+
+
+def scenario_exists(scenario_id: str) -> bool:
+    return scenario_id in list_scenario_ids() or scenario_id in list_protocol_scenario_ids()
+
+
+def all_scenario_ids() -> list[str]:
+    return list_scenario_ids() + list_protocol_scenario_ids()
 
 
 @lru_cache
 def load_scenario(scenario_id: str, data_dir: Path = DATA_DIR) -> ScenarioDataset:
-    if scenario_id not in list_scenario_ids(data_dir):
+    if scenario_id in list_scenario_ids(data_dir):
+        path = data_dir / SCENARIOS_DIR / f"{scenario_id}.json"
+    elif data_dir == DATA_DIR and scenario_id in list_protocol_scenario_ids():
+        path = PROTOCOL_SCENARIOS / f"{scenario_id}.json"
+    else:
         raise DatasetNotFoundError(f"unknown scenario: {scenario_id}")
-    path = data_dir / SCENARIOS_DIR / f"{scenario_id}.json"
     dataset = ScenarioDataset.model_validate_json(read_dataset(path))
     errors = find_reference_errors(load_topology(data_dir), dataset)
     if dataset.scenario.scenario_id != scenario_id:

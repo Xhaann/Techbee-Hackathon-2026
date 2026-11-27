@@ -2,6 +2,7 @@
 
 import { Download } from "lucide-react";
 import Link from "next/link";
+import { ReliabilitySection } from "@/components/observability/reliability";
 import { Topbar } from "@/components/shell/topbar";
 import { ErrorNote, Skeleton } from "@/components/ui/atoms";
 import { Button } from "@/components/ui/button";
@@ -127,6 +128,8 @@ export function ReportsView() {
               </div>
             )}
           </section>
+
+          <ReliabilitySection />
 
           <section aria-labelledby="table-heading">
             <h2 id="table-heading" className="text-[15px] font-semibold tracking-[-0.015em] text-ink">

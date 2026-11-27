@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from app.network.advanced_scenarios import build as build_advanced
 from app.network.generator import build_scenarios, build_topology, to_json, write_datasets
 from app.network.repository import DATA_DIR, SCENARIOS_DIR, TOPOLOGY_FILE, list_scenario_ids
 
@@ -13,7 +14,8 @@ DIGEST_SCRIPT = (
     "from app.network.generator import build_scenarios, build_topology, to_json\n"
     "topology = build_topology()\n"
     "digest = hashlib.sha256(to_json(topology).encode())\n"
-    "[digest.update(to_json(dataset).encode()) for dataset in build_scenarios(topology)]\n"
+    "from app.network.advanced_scenarios import build\n"
+    "[digest.update(to_json(dataset).encode()) for dataset in build_scenarios(topology) + build()]\n"
     "pathlib.Path(sys.argv[1]).write_text(digest.hexdigest())\n"
 )
 
@@ -21,7 +23,7 @@ DIGEST_SCRIPT = (
 def full_digest() -> str:
     topology = build_topology()
     digest = hashlib.sha256(to_json(topology).encode())
-    for dataset in build_scenarios(topology):
+    for dataset in build_scenarios(topology) + build_advanced():
         digest.update(to_json(dataset).encode())
     return digest.hexdigest()
 
@@ -43,7 +45,7 @@ def test_generation_is_independent_of_hash_seed(tmp_path: Path) -> None:
 def test_committed_datasets_match_generator() -> None:
     topology = build_topology()
     assert (DATA_DIR / TOPOLOGY_FILE).read_bytes() == to_json(topology).encode("utf-8")
-    datasets = build_scenarios(topology)
+    datasets = build_scenarios(topology) + build_advanced()
     assert list_scenario_ids() == sorted(dataset.scenario.scenario_id for dataset in datasets)
     for dataset in datasets:
         path = DATA_DIR / SCENARIOS_DIR / f"{dataset.scenario.scenario_id}.json"
@@ -52,6 +54,9 @@ def test_committed_datasets_match_generator() -> None:
 
 def test_write_datasets_produces_identical_files(tmp_path: Path) -> None:
     write_datasets(tmp_path)
+    for dataset in build_advanced():
+        (tmp_path / SCENARIOS_DIR / f"{dataset.scenario.scenario_id}.json").write_text(to_json(dataset), encoding="utf-8",
+                                                                                        newline="\n")
     written = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*.json"))
     committed = sorted(path.relative_to(DATA_DIR) for path in DATA_DIR.rglob("*.json"))
     assert written == committed

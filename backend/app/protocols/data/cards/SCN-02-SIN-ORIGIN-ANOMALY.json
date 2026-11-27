@@ -1,0 +1,170 @@
+{
+  "scenario_id": "SCN-02-SIN-ORIGIN-ANOMALY",
+  "incident_id": "INC-20260422-402",
+  "title": "Unexpected origin for Singapore users",
+  "difficulty": [
+    "multi-site",
+    "multi-layer",
+    "misleading-evidence",
+    "security-uncertainty"
+  ],
+  "capabilities": [
+    "routing state",
+    "reachability",
+    "BGP",
+    "TCP",
+    "DNS",
+    "wireless",
+    "STP",
+    "threat correlation"
+  ],
+  "sites": [
+    "SIN"
+  ],
+  "unaffected_sites": [
+    "NYC",
+    "BLR"
+  ],
+  "affected_devices": [
+    "NYC-RTR-01",
+    "CORE-RTR-01"
+  ],
+  "affected_services": [
+    "application",
+    "dns",
+    "internet"
+  ],
+  "affected_paths": [
+    "PATH-SIN-APPLICATION",
+    "PATH-SIN-DNS",
+    "PATH-SIN-INTERNET"
+  ],
+  "timeline": [
+    {
+      "minute": -6.0,
+      "evidence": "events:EVT-S02-001",
+      "what": "Lab peering configured on NYC-RTR-01"
+    },
+    {
+      "minute": 0.0,
+      "evidence": "route_changes:RC-S02-001",
+      "what": "CORE-RTR-01 installs 10.20.10.96/28 via New York"
+    },
+    {
+      "minute": 1.0,
+      "evidence": "dns_queries:DNS-Q-S02-01",
+      "what": "Clients in .96-.111 start timing out"
+    }
+  ],
+  "root_cause": "A lab AS (64999) peered with NYC-RTR-01 announces a more-specific of Singapore's user subnet; return traffic for half of Singapore goes to New York.",
+  "symptoms": [
+    "Half of Singapore's desktops can't reach ERP or DNS",
+    "The other half is fine"
+  ],
+  "secondary_effects": [
+    "TCP handshake failures from Singapore",
+    "DNS timeouts for clients in .96-.111 only"
+  ],
+  "decoys": [
+    {
+      "clue": "Wi-Fi busy all morning",
+      "evidence": [
+        "radio_samples:SIN-AP-01|5GHz@2026-04-22T09:05:00Z"
+      ],
+      "why_misleading": "High utilisation with clean RF and low retries; wired desktops are affected too.",
+      "must_not_conclude": [
+        "WIFI_INTERFERENCE",
+        "WIFI_CO_CHANNEL"
+      ]
+    },
+    {
+      "clue": "Two STP topology changes on SIN-SW-01",
+      "evidence": [
+        "events:EVT-S02-010",
+        "events:EVT-S02-011"
+      ],
+      "why_misleading": "Two changes in forty minutes is normal port activity.",
+      "must_not_conclude": [
+        "STP_TC_STORM",
+        "STP_LOOP"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": true,
+    "acceptable_domains": [
+      "routing"
+    ],
+    "note": "The more-specific route is in the core routing tables; the origin AS is only in the BGP telemetry."
+  },
+  "expected_findings": [
+    {
+      "engine": "bgp",
+      "code": "BGP_ORIGIN_HIJACK_SUSPECTED",
+      "status": "suspicious_indicator",
+      "role": "root",
+      "min_confidence": null,
+      "max_confidence": 0.85
+    },
+    {
+      "engine": "tcp",
+      "code": "TCP_HANDSHAKE_FAILURES",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    }
+  ],
+  "acceptable_findings": [
+    "TCP_RETRANSMISSION_HIGH",
+    "THREAT_CORRELATED_ACTIVITY"
+  ],
+  "forbidden_findings": [
+    "WIFI_INTERFERENCE",
+    "WIFI_CO_CHANNEL",
+    "STP_TC_STORM",
+    "STP_LOOP",
+    "BGP_ROUTE_LEAK"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S02-001",
+    "route_changes:RC-S02-001",
+    "bgp_updates:BU-S02-001",
+    "bgp_routes:NYC-RTR-01|10.20.10.96/28|lab",
+    "dns_queries:DNS-Q-S02-01",
+    "dns_queries:DNS-Q-S02-11"
+  ],
+  "configuration": [
+    {
+      "device_id": "NYC-RTR-01",
+      "golden_contains": [
+        "router bgp 65010"
+      ],
+      "running_contains": [
+        "router bgp 65010 ; neighbor 10.10.99.251 remote-as 64999"
+      ],
+      "running_lacks": []
+    }
+  ],
+  "commands": [
+    {
+      "device_id": "CORE-RTR-01",
+      "command": "show ip bgp 10.20.10.96 255.255.255.240",
+      "expect": "Path 65010 64999, origin AS64999"
+    },
+    {
+      "device_id": "NYC-RTR-01",
+      "command": "show ip bgp summary",
+      "expect": "A new neighbour 10.10.99.251 in AS64999"
+    },
+    {
+      "device_id": "SIN-SW-01",
+      "command": "traceroute 10.100.100.40",
+      "expect": "Replies to .96-.111 hosts route via New York"
+    }
+  ],
+  "confidence": "The origin anomaly must stay a suspicious indicator (at most 0.85, never confirmed, no attribution): the data shows an unregistered origin, not intent. The TCP impact is confirmed."
+}

@@ -31,6 +31,13 @@ def build_test_router() -> APIRouter:
     return router
 
 
+@pytest.fixture(autouse=True)
+def no_demo_seeding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An app a test starts never seeds demo incidents unless the test asks for it (demo_incidents=True), so no test writes
+    demo records into the developer's real incident store. Servers started in a subprocess inherit this too."""
+    monkeypatch.setenv("DEMO_INCIDENTS", "false")
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(_env_file=None, openai_api_key="sk-test-not-a-real-key")

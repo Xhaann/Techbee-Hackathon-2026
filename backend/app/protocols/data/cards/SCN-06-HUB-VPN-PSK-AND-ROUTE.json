@@ -1,0 +1,140 @@
+{
+  "scenario_id": "SCN-06-HUB-VPN-PSK-AND-ROUTE",
+  "incident_id": "INC-20260426-406",
+  "title": "Hub VPN changes break two tunnels",
+  "difficulty": [
+    "shared-device",
+    "multi-site",
+    "multiple-symptoms"
+  ],
+  "capabilities": [
+    "change history",
+    "IPsec",
+    "routing",
+    "TLS (expiry note)"
+  ],
+  "sites": [
+    "NYC",
+    "BLR"
+  ],
+  "unaffected_sites": [
+    "SIN"
+  ],
+  "affected_devices": [
+    "CORE-FW-01"
+  ],
+  "affected_services": [
+    "backup vpn"
+  ],
+  "affected_paths": [
+    "PATH-BLR-INTERNET",
+    "PATH-NYC-INTERNET"
+  ],
+  "timeline": [
+    {
+      "minute": -8.0,
+      "evidence": "events:EVT-S06-001",
+      "what": "New York PSK rotated on the hub only"
+    },
+    {
+      "minute": -7.0,
+      "evidence": "protocol_events:PE-S06-01",
+      "what": "IKE authentication failures from New York"
+    },
+    {
+      "minute": -4.0,
+      "evidence": "events:EVT-S06-002",
+      "what": "Bengaluru return route deleted"
+    },
+    {
+      "minute": 3.0,
+      "evidence": "events:EVT-S06-004",
+      "what": "Bengaluru tunnel probe fails"
+    }
+  ],
+  "root_cause": "Two hub changes: PSK rotated for New York on CORE-FW-01 only, and the static route back to Bengaluru through its tunnel deleted.",
+  "symptoms": [
+    "NYC backup VPN down",
+    "BLR backup VPN up but its probe fails"
+  ],
+  "secondary_effects": [
+    "One-way traffic in the Bengaluru tunnel"
+  ],
+  "decoys": [
+    {
+      "clue": "RADIUS certificate expires in 20 days",
+      "evidence": [
+        "certificates:CERT-RADIUS"
+      ],
+      "why_misleading": "Still valid; unrelated to IPsec, which uses pre-shared keys.",
+      "must_not_conclude": [
+        "TLS_CERTIFICATE_EXPIRED"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": false,
+    "acceptable_domains": [
+      "firewall"
+    ],
+    "note": "Primary paths are healthy; only the change log on CORE-FW-01 hints at the cause in the core data."
+  },
+  "expected_findings": [
+    {
+      "engine": "ipsec",
+      "code": "IPSEC_AUTH_FAILURE",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    },
+    {
+      "engine": "ipsec",
+      "code": "IPSEC_ONE_WAY",
+      "status": "possible_explanation",
+      "role": "root",
+      "min_confidence": null,
+      "max_confidence": 0.65
+    }
+  ],
+  "acceptable_findings": [],
+  "forbidden_findings": [
+    "IPSEC_PROPOSAL_MISMATCH",
+    "IPSEC_SELECTOR_MISMATCH",
+    "TLS_CERTIFICATE_EXPIRED"
+  ],
+  "max_counts": {
+    "IPSEC_AUTH_FAILURE": 1
+  },
+  "acceptable_roots": [
+    "IPSEC_AUTH_FAILURE@NYC",
+    "IPSEC_ONE_WAY@BLR"
+  ],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S06-001",
+    "events:EVT-S06-002",
+    "protocol_events:PE-S06-01",
+    "ipsec_tunnels:TUN-NYC-BACKUP-HUB",
+    "ipsec_tunnels:TUN-BLR-BACKUP"
+  ],
+  "configuration": [],
+  "commands": [
+    {
+      "device_id": "CORE-FW-01",
+      "command": "show vpn ike-sa",
+      "expect": "No SA for 198.51.100.10"
+    },
+    {
+      "device_id": "NYC-RTR-01",
+      "command": "show crypto ikev2 sa",
+      "expect": "No READY SA"
+    },
+    {
+      "device_id": "BLR-RTR-01",
+      "command": "show crypto ipsec sa",
+      "expect": "Encaps rising, decaps zero"
+    }
+  ],
+  "confidence": "Authentication failure for New York is confirmed by the hub's logs and must be attributed to New York only (Singapore's healthy tunnel is the comparison). The one-way tunnel is a possible explanation (at most 0.65)."
+}

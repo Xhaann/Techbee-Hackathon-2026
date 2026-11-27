@@ -1,6 +1,18 @@
 from fastapi import APIRouter
 
-from app.api.routes import agent, auth, conversations, dashboard, diagnosis, incidents, knowledge, reports, topology
+from app.api.routes import (
+    agent,
+    auth,
+    conversations,
+    dashboard,
+    diagnosis,
+    incidents,
+    knowledge,
+    observability,
+    protocols,
+    reports,
+    topology,
+)
 from app.core.responses import ErrorResponse
 
 api_router = APIRouter(
@@ -16,5 +28,5 @@ api_router = APIRouter(
     }
 )
 
-for module in (auth, dashboard, topology, diagnosis, agent, conversations, incidents, knowledge, reports):
+for module in (auth, dashboard, topology, diagnosis, agent, conversations, incidents, knowledge, reports, observability, protocols):
     api_router.include_router(module.router)

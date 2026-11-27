@@ -1,0 +1,149 @@
+{
+  "scenario_id": "SCN-05-EDGE-NAT-RULE-SHADOW",
+  "incident_id": "INC-20260425-405",
+  "title": "No-NAT rule shadows internet PAT",
+  "difficulty": [
+    "shared-device",
+    "multi-site",
+    "misleading-evidence",
+    "cascading"
+  ],
+  "capabilities": [
+    "firewall logs",
+    "traffic flows",
+    "NAT",
+    "TCP",
+    "DNS",
+    "TLS"
+  ],
+  "sites": [
+    "NYC",
+    "SIN",
+    "BLR"
+  ],
+  "unaffected_sites": [],
+  "affected_devices": [
+    "CORE-FW-01"
+  ],
+  "affected_services": [
+    "internet",
+    "dns"
+  ],
+  "affected_paths": [
+    "PATH-BLR-INTERNET",
+    "PATH-NYC-INTERNET",
+    "PATH-SIN-INTERNET"
+  ],
+  "timeline": [
+    {
+      "minute": -3.0,
+      "evidence": "events:EVT-S05-001",
+      "what": "NONAT-PARTNER-VPN committed at position 50"
+    },
+    {
+      "minute": 1.0,
+      "evidence": "events:EVT-S05-002",
+      "what": "DNS forwarders time out"
+    },
+    {
+      "minute": 2.0,
+      "evidence": "dns_queries:DNS-Q-S05-01",
+      "what": "External names SERVFAIL; internal names fine"
+    }
+  ],
+  "root_cause": "A no-NAT rule above the PAT rule exempts all internal traffic from translation; replies never return.",
+  "symptoms": [
+    "No external websites at any office",
+    "DNS errors for external names",
+    "ERP fine"
+  ],
+  "secondary_effects": [
+    "PAT pool almost empty",
+    "External DNS forwarding fails",
+    "Internet TCP handshakes never complete"
+  ],
+  "decoys": [
+    {
+      "clue": "DNS forwarder timeouts and SERVFAIL for external names",
+      "evidence": [
+        "events:EVT-S05-002",
+        "dns_queries:DNS-Q-S05-01"
+      ],
+      "why_misleading": "Internal names resolve (DNS-Q-S05-11); the forwarders are on the internet, which is what broke.",
+      "must_not_conclude": [
+        "dns"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": false,
+    "acceptable_domains": [
+      "firewall"
+    ],
+    "note": "The NAT rule base is only in the protocol telemetry; the core data shows the policy commit and DNS symptoms."
+  },
+  "expected_findings": [
+    {
+      "engine": "nat",
+      "code": "NAT_RULE_SHADOWED",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    },
+    {
+      "engine": "nat",
+      "code": "NAT_RULE_MISSING",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    },
+    {
+      "engine": "tcp",
+      "code": "TCP_HANDSHAKE_FAILURES",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    }
+  ],
+  "acceptable_findings": [],
+  "forbidden_findings": [
+    "TLS_INSPECTION_UNTRUSTED",
+    "TLS_CERTIFICATE_EXPIRED",
+    "NAT_POOL_EXHAUSTED"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [
+    "NAT_RULE_SHADOWED",
+    "NAT_RULE_MISSING"
+  ],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S05-001",
+    "nat_rules:NONAT-PARTNER-VPN",
+    "nat_rules:NAT-0100",
+    "dns_queries:DNS-Q-S05-01",
+    "dns_queries:DNS-Q-S05-11"
+  ],
+  "configuration": [],
+  "commands": [
+    {
+      "device_id": "CORE-FW-01",
+      "command": "show running nat-policy",
+      "expect": "NONAT-PARTNER-VPN above the PAT rule"
+    },
+    {
+      "device_id": "CORE-FW-01",
+      "command": "show running ippool",
+      "expect": "PAT pool nearly unused"
+    },
+    {
+      "device_id": "DC1-SRV-DNS-01",
+      "command": "dig @10.100.100.10 www.example.org",
+      "expect": "SERVFAIL for external names only"
+    }
+  ],
+  "confidence": "The NAT findings are direct configuration evidence (at least 0.8). DNS must not be concluded."
+}

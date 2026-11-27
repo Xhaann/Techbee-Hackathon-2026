@@ -109,7 +109,7 @@ def test_overall_run_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
     async def slow(request: httpx2.Request) -> httpx2.Response:
         await asyncio.sleep(5)
         return httpx2.Response(500)
-    monkeypatch.setattr("app.agent.session.run_deadline", lambda config: 0.05)
+    monkeypatch.setattr("app.agent.session.run_deadline", lambda config, *limit: 0.05)
     agent = DiagnosisAgent(settings=ai_settings(), http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(slow)))
     run = agent.run("WAN-FAILURE", SINGAPORE)
     assert any("exceeded" in limitation for limitation in run.diagnosis.limitations)

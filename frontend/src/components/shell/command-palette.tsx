@@ -19,6 +19,8 @@ import {
   CircleHelp,
   FileText,
   Plus,
+  Radar,
+  ShieldCheck,
   Router,
   Search,
   Settings,
@@ -37,6 +39,20 @@ const PAGES: Entry[] = [
   { value: "page:diagnose", label: "Diagnose", href: "/diagnose", icon: Activity },
   { value: "page:incidents", label: "Incidents", href: "/incidents", icon: TriangleAlert },
   { value: "page:insights", label: "Network insights", href: "/insights", icon: ChartLine, keywords: ["topology", "devices", "health"] },
+  {
+    value: "page:observability",
+    label: "Observability",
+    href: "/observability",
+    icon: Radar,
+    keywords: ["telemetry", "traffic", "flows", "drift", "forecast", "health map", "packet journey"],
+  },
+  {
+    value: "page:protocols",
+    label: "Protocols & security",
+    href: "/protocols",
+    icon: ShieldCheck,
+    keywords: ["bgp", "ospf", "stp", "arp", "vlan", "nat", "vpn", "ipsec", "tcp", "mtu", "qos", "ipv6", "wifi", "multicast", "tls", "threats", "lateral"],
+  },
   { value: "page:knowledge", label: "Knowledge base", href: "/knowledge", icon: BookOpen, keywords: ["playbook", "runbook"] },
   { value: "page:reports", label: "Reports", href: "/reports", icon: FileText },
   { value: "page:cli", label: "Remote CLI", href: "/cli", icon: SquareTerminal, keywords: ["commands", "checks"] },
@@ -55,10 +71,10 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const incidentEntries: Entry[] = (incidents.data?.items ?? []).map((incident) => ({
     value: `incident:${incident.incident_id}`,
     label: incident.title,
-    hint: `${incident.incident_id} · ${STATUS_LABEL[incident.status]}`,
+    hint: `${incident.incident_id} · ${STATUS_LABEL[incident.status]}${incident.demo ? " · Demo" : ""}`,
     href: `/diagnose/${incident.incident_id}`,
     icon: TriangleAlert,
-    keywords: [incident.incident_id, ...incident.site_ids],
+    keywords: [incident.incident_id, ...incident.site_ids, ...(incident.dataset_scenario_id ? [incident.dataset_scenario_id] : []), ...(incident.demo ? ["demo"] : [])],
   }));
   const deviceEntries: Entry[] = (topology.data?.devices ?? []).map((device) => ({
     value: `device:${device.device_id}`,

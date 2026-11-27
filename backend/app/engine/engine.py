@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from typing import Any
 
 from pydantic import ValidationError
@@ -33,10 +34,11 @@ from app.engine.schema import (
 )
 from app.engine.validation import ValidatedDraft, check_diagnosis, validate_draft
 from app.network.models import NetworkTopology
-from app.network.repository import list_scenario_ids, load_topology
+from app.network.repository import load_topology, scenario_exists
 
 MAX_MODEL_TURNS = 12
 MAX_DOCUMENTS = 3
+DEFAULT_MODEL_RUN_SECONDS = 120.0
 CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
 
@@ -51,8 +53,10 @@ def parse_draft(content: str | None) -> DiagnosisDraft | None:
 
 class ModelSession:
     def __init__(self, provider: ModelProvider, executor: ToolExecutor, request: DiagnosisRequest,
-                 context: IncidentContext, documents: list[RetrievedDocument]) -> None:
+                 context: IncidentContext, documents: list[RetrievedDocument],
+                 deadline_seconds: float = DEFAULT_MODEL_RUN_SECONDS) -> None:
         self.provider = provider
+        self.deadline_seconds = deadline_seconds
         self.executor = executor
         self.request = request
         self.context = context
@@ -85,7 +89,11 @@ class ModelSession:
             {"role": "user", "content": self.opening()},
         ]
         tools = tool_schemas()
+        started = time.monotonic()
         for _ in range(MAX_MODEL_TURNS):
+            if time.monotonic() - started >= self.deadline_seconds:
+                self.limitations.append(f"Model provider error (timeout: the model run exceeded {self.deadline_seconds:.0f} seconds)")
+                return None
             exhausted = self.executor.remaining <= 0
             try:
                 reply = self.provider.complete(messages, None if exhausted else tools)
@@ -116,16 +124,17 @@ class ModelSession:
 
 class DiagnosisEngine:
     def __init__(self, provider: ModelProvider | None = None, retriever: Retriever | None = None,
-                 max_tool_calls: int = MAX_TOOL_CALLS) -> None:
+                 max_tool_calls: int = MAX_TOOL_CALLS, run_seconds: float = DEFAULT_MODEL_RUN_SECONDS) -> None:
         self.provider = provider
         self.retriever = retriever or NoRetrieval()
         self.max_tool_calls = max_tool_calls
+        self.run_seconds = run_seconds
 
     def diagnose(self, request: DiagnosisRequest) -> Diagnosis:
         return self.diagnose_with_records(request)[0]
 
     def diagnose_with_records(self, request: DiagnosisRequest) -> tuple[Diagnosis, list[ToolCallRecord]]:
-        if request.scenario_id not in list_scenario_ids():
+        if not scenario_exists(request.scenario_id):
             raise DiagnosisRequestError(f"Unknown scenario '{request.scenario_id}'")
         topology = load_topology()
         context = resolve_context(request, topology)
@@ -141,18 +150,23 @@ class DiagnosisEngine:
 
         if not context.sites:
             limitations.append("No affected site could be identified from the request; supply site_ids")
+        def sufficient() -> bool:
+            catalog = build_catalog(executor.records)
+            return correlate(executor.records, catalog, topology, context.sites, context.onset).confidence == Confidence.HIGH
+
         if self.provider is None:
             if context.sites:
-                def sufficient() -> bool:
-                    catalog = build_catalog(executor.records)
-                    return correlate(executor.records, catalog, topology, context.sites).confidence == Confidence.HIGH
                 RuleBasedPlanner(topology, context).run(executor, sufficient)
         else:
-            session = ModelSession(self.provider, executor, request, context, documents)
+            session = ModelSession(self.provider, executor, request, context, documents, self.run_seconds)
             draft = session.run()
             limitations += session.limitations
             issues += session.issues
             validated, draft_rejected = self.validate(draft, executor, topology, context, issues)
+            if validated is None and context.sites and executor.remaining > 0:
+                # The model failed, timed out or was rejected: finish the investigation with the rule-based planner,
+                # within what is left of the same budget, instead of concluding from a partial tool sequence.
+                RuleBasedPlanner(topology, context).run(executor, sufficient)
         diagnosis = self.conclude(request, context, topology, executor, documents, flags, validated, draft_rejected,
                                   limitations, issues)
         return diagnosis, list(executor.records)
@@ -162,7 +176,7 @@ class DiagnosisEngine:
         validated = None
         if draft is not None:
             catalog = build_catalog(executor.records)
-            correlation = correlate(executor.records, catalog, topology, context.sites)
+            correlation = correlate(executor.records, catalog, topology, context.sites, context.onset)
             validated, draft_issues = validate_draft(draft, catalog, topology, correlation, self.known_secrets())
             issues += draft_issues
         return validated, validated is None
@@ -175,11 +189,11 @@ class DiagnosisEngine:
         for item in catalog:
             if item.evidence_type == EvidenceType.RECORD:
                 flags += injection_flags(f"log record {item.references[0].record_id}", item.summary)
-        correlation = correlate(executor.records, catalog, topology, context.sites)
+        correlation = correlate(executor.records, catalog, topology, context.sites, context.onset)
         limitations += correlation.limitations
         limitations += [f"Tool {r.tool} ({r.call_id}) failed: {r.error_code}" for r in executor.records if r.status == "failed"]
-        if executor.remaining <= 0:
-            limitations.append(f"Tool call budget of {executor.max_calls} was exhausted")
+        if any(record.error_code == "BUDGET_EXHAUSTED" for record in executor.records):
+            limitations.append(f"Tool call budget of {executor.max_calls} was exhausted before every planned check ran")
         diagnosis = self.assemble(request, context, topology, executor, catalog, correlation, validated,
                                   draft_rejected, limitations, issues, sorted(set(flags)), documents)
         final_issues = check_diagnosis(diagnosis, catalog, topology, self.known_secrets())

@@ -60,7 +60,9 @@ def result_items(record: ToolCallRecord) -> list[dict[str, Any]]:
 
 
 def build_catalog(records: list[ToolCallRecord]) -> list[EvidenceItem]:
+    """Evidence ids are E<n>, numbered from the executor's evidence base so ids stay unique within a conversation."""
     items: list[EvidenceItem] = []
+    base = records[0].evidence_base if records else 0
     for record in records:
         if not record.succeeded:
             continue
@@ -73,7 +75,7 @@ def build_catalog(records: list[ToolCallRecord]) -> list[EvidenceItem]:
             if len(items) >= MAX_CATALOG_ITEMS:
                 return items
             items.append(EvidenceItem(
-                evidence_id=f"E{len(items) + 1}", call_id=record.call_id, tool=record.tool,
+                evidence_id=f"E{base + len(items) + 1}", call_id=record.call_id, tool=record.tool,
                 evidence_type=entry["evidence_type"], code=entry["code"], device_id=entry["device_id"],
                 summary=redact(entry["summary"])[:MAX_SUMMARY_CHARS], timestamp=observed_at(entry["references"]),
                 references=entry["references"],

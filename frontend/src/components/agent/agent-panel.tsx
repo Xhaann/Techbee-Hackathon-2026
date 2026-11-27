@@ -18,7 +18,7 @@ import {
   UserCheck,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Spinner } from "@/components/ui/button";
 import { Tip } from "@/components/ui/tip";
 import { notify } from "@/components/ui/toaster";
@@ -31,6 +31,7 @@ import { cn } from "@/lib/cn";
 import { CONFIDENCE_LABEL, FAULT_LABEL } from "@/lib/labels";
 import { setPrefs, usePrefs } from "@/lib/prefs";
 import { clock } from "@/lib/time";
+import { ARTIFACTS, type Attachment, AttachmentView } from "./attachments";
 import { type LiveInvestigation, type LiveTool, useConversation } from "./use-conversation";
 
 export type WorkspaceTab = "summary" | "evidence" | "checks" | "alternatives" | "timeline" | "escalations";
@@ -48,6 +49,15 @@ const TOOL_LABEL: Record<string, string> = {
   analyze_routing_adjacency: "Routing adjacency analysis",
   check_device_availability: "Device availability",
   analyze_network_dependencies: "Dependency analysis",
+  analyze_path_health: "Path health",
+  get_event_timeline: "Event timeline",
+  get_change_history: "Change history",
+  get_network_health: "Health scores",
+  get_config_drift: "Configuration drift",
+  analyze_traffic_flows: "Traffic flows",
+  trace_packet: "Packet journey",
+  forecast_capacity: "Capacity forecast",
+  analyze_protocol: "Protocol check",
   search_knowledge: "Knowledge search",
 };
 
@@ -61,6 +71,22 @@ const INTENT_TAG: Partial<Record<string, string>> = {
   evidence_explanation: "Evidence",
   status: "Status",
   human_action: "Needs a person",
+  hypothesis_check: "Hypothesis",
+  customer_email: "Email draft",
+  customer_update: "Customer update",
+  troubleshooting: "Troubleshooting",
+  commands: "Commands",
+  output_interpretation: "Output reading",
+  step_failed: "Step failed",
+  specialist_review: "Specialists",
+  multi_agent: "Specialist team",
+  protocol_check: "Protocol check",
+};
+
+const RESULT_LABEL: Record<string, string> = {
+  ai_agent: "AI agent",
+  rule_based: "Rule-based",
+  rule_based_fallback: "Rule-based fallback",
 };
 
 const HUMAN_ACTIONS = new Set<ActionKey>(["confirm", "escalate", "close", "reopen", "severity", "priority", "propose", "verify", "edit"]);
@@ -126,6 +152,23 @@ export function AgentPanel({ incident, onClose, onShowTab }: { incident: Inciden
         return;
       case "status":
         void conversation.act({ kind: "status", label: action.label });
+        return;
+      case "run_plan":
+        void conversation.act({
+          kind: "run_plan",
+          calls: (params.calls as { tool: string; arguments: Record<string, unknown> }[]) ?? [],
+          label: action.label,
+        });
+        return;
+      case "multi_agent":
+        void conversation.act({ kind: "multi_agent", label: action.label });
+        return;
+      case "protocol":
+        void conversation.act({
+          kind: "protocol",
+          calls: (params.calls as { tool: string; arguments: Record<string, unknown> }[]) ?? [],
+          label: action.label,
+        });
         return;
       case "show_tab":
         onShowTab?.((params.tab as WorkspaceTab) ?? "summary");
@@ -259,7 +302,7 @@ export function AgentPanel({ incident, onClose, onShowTab }: { incident: Inciden
 
         {state.messages.map((message) =>
           message.role === "user" ? (
-            <div key={message.message_id} className="ml-8 rounded-[8px] bg-selected px-3.5 py-2.5 text-[13.5px] leading-[1.5] whitespace-pre-wrap text-ink">
+            <div key={message.message_id} className="ml-8 rounded-[8px] bg-selected px-3.5 py-2.5 text-[14px] leading-[1.55] whitespace-pre-wrap text-ink">
               {message.content}
             </div>
           ) : (
@@ -443,7 +486,7 @@ function ToolRow({ tool }: { tool: LiveTool }) {
 }
 
 function ProgressCard({ investigation, cancelling }: { investigation: LiveInvestigation; cancelling: boolean }) {
-  const title = investigation.kind === "full_diagnosis" ? "Investigating the incident" : "Running the check";
+  const title = investigation.kind === "full_diagnosis" ? "Investigating the incident" : investigation.kind === "multi_agent" ? "Specialists investigating" : investigation.kind === "protocol_check" ? "Running protocol checks" : "Running the check";
   const running = investigation.status === "running";
   return (
     <section aria-label={title} className="mr-4 rounded-[8px] bg-raised px-3.5 py-3 shadow-[0_0_0_1px_var(--line-soft)]">
@@ -503,17 +546,64 @@ function AssistantMessage({
   onEvidence: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(false);
   const tag = message.intent ? INTENT_TAG[message.intent] : undefined;
+  const attachments = (message.attachments ?? []) as Attachment[];
+  const artifact = attachments.some((a) => ARTIFACTS.has(a.kind));
+  // An artifact (draft, guide, command list) is shown as its card; the bubble keeps only the lead sentence.
+  const lead = artifact ? message.content.split("\n\n")[0] : message.content;
+  const generated = message.generated_by;
+  const resultLabel = generated && generated.result !== "none" ? RESULT_LABEL[generated.result] : undefined;
   const suggested = message.suggested_actions ?? [];
   const human = suggested.filter((a) => a.requires_human);
   const plain = suggested.filter((a) => !a.requires_human);
   const evidence = dedupeEvidence(message.evidence_refs ?? []);
+  const links = useMemo(() => ({ refs: new Map(evidence.map((ref) => [ref.evidence_id, ref])), open: onEvidence }), [evidence, onEvidence]);
   const options = message.clarification?.options ?? [];
   const ran = steps?.filter((s) => s.status === "executed" || s.status === "failed").length;
 
   return (
     <Bubble at={clock(message.created_at, siteId)} tag={message.status === "cancelled" ? "Stopped" : message.status === "failed" ? "Problem" : tag}>
-      <RichText text={message.content} />
+      <EvidenceLinks.Provider value={links}>
+      <RichText text={lead} />
+
+      {attachments.map((attachment, index) => (
+        <AttachmentView key={`${attachment.kind}-${index}`} attachment={attachment} />
+      ))}
+
+      {message.details && message.intent !== "detail" ? (
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={() => setMore(!more)}
+            aria-expanded={more}
+            className="flex items-center gap-1 text-[12px] text-ink-3 hover:text-ink"
+          >
+            <ChevronRight className={cn("size-3 transition-transform", more && "rotate-90")} aria-hidden />
+            {more ? "Hide technical details" : "Technical details"}
+          </button>
+          {more ? (
+            <div className="mt-1.5 rounded-[8px] bg-sunken px-3 py-2.5 shadow-[0_0_0_1px_var(--line-soft)]">
+              <RichText text={message.details} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      </EvidenceLinks.Provider>
+
+      {resultLabel ? (
+        <Tip label={generated?.note ?? (generated?.reply === "model" ? "Reply written by the AI model from the turn's verified facts" : "Reply written by the rule-based composer")}>
+          <span
+            tabIndex={0}
+            className={cn(
+              "mt-2 inline-flex h-5 items-center rounded-[5px] px-1.5 text-[10.5px] font-medium",
+              generated?.result === "rule_based_fallback" ? "bg-amber-soft text-amber" : "bg-hover text-ink-3",
+            )}
+          >
+            Result: {resultLabel}
+          </span>
+        </Tip>
+      ) : null}
 
       {message.investigation_id ? (
         <div className="mt-2.5">
@@ -547,11 +637,13 @@ function AssistantMessage({
       ) : null}
 
       {evidence.length ? (
-        <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-line-soft pt-2.5">
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-line-soft pt-2.5">
+          <span className="mr-0.5 text-[11.5px] text-ink-3">Evidence</span>
           {evidence.slice(0, 8).map((ref) => (
-            <Tip key={`${ref.investigation_id ?? ref.diagnosis_id}-${ref.evidence_id}`} label={`${ref.summary} (${TOOL_LABEL[ref.tool] ?? ref.tool}, ${ref.call_id})`}>
+            <Tip key={`${ref.investigation_id ?? ref.diagnosis_id}-${ref.evidence_id}`} label={evidenceTip(ref)}>
               <button
                 type="button"
+                aria-label={`Explain ${ref.evidence_id}`}
                 onClick={() => onEvidence(ref.evidence_id)}
                 className="h-6 rounded-[5px] bg-accent-soft px-1.5 font-mono text-[11px] text-accent hover:brightness-125"
               >
@@ -617,6 +709,32 @@ function AssistantMessage({
   );
 }
 
+/** A tooltip in plain words; the raw audit summary stays in the technical details and the evidence tab. */
+function evidenceTip(ref: EvidenceReference) {
+  return `${ref.plain ?? ref.summary} (${TOOL_LABEL[ref.tool] ?? ref.tool})`;
+}
+
+/** Evidence the current message cites, so an id written in the text (E1) opens the same explanation as its chip. */
+const EvidenceLinks = createContext<{ refs: Map<string, EvidenceReference>; open: (id: string) => void } | null>(null);
+
+function EvidenceId({ id }: { id: string }) {
+  const links = useContext(EvidenceLinks);
+  const ref = links?.refs.get(id);
+  if (!links || !ref) return <span className="font-mono text-[12.5px] text-accent">{id}</span>;
+  return (
+    <Tip label={evidenceTip(ref)}>
+      <button
+        type="button"
+        aria-label={`Explain ${id}`}
+        onClick={() => links.open(id)}
+        className="rounded-[3px] font-mono text-[12.5px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+      >
+        {id}
+      </button>
+    </Tip>
+  );
+}
+
 function dedupeEvidence(refs: EvidenceReference[]) {
   const seen = new Set<string>();
   return refs.filter((ref) => {
@@ -655,12 +773,7 @@ function Inline({ text }: { text: string }) {
               {part.slice(1, -1)}
             </code>
           );
-        if (/^E\d{1,3}$/.test(part))
-          return (
-            <span key={index} className="font-mono text-[12.5px] text-accent">
-              {part}
-            </span>
-          );
+        if (/^E\d{1,3}$/.test(part)) return <EvidenceId key={index} id={part} />;
         return <Fragment key={index}>{part}</Fragment>;
       })}
     </>
@@ -668,26 +781,45 @@ function Inline({ text }: { text: string }) {
 }
 
 export function RichText({ text }: { text: string }) {
-  const blocks: { kind: "p" | "ul"; lines: string[] }[] = [];
+  const blocks: { kind: "p" | "ul" | "ol"; lines: string[]; start?: number }[] = [];
   for (const raw of text.split("\n")) {
     const line = raw.trimEnd();
-    const bullet = /^\s*(?:[-*•]|\d{1,2}[.)])\s+/.test(line);
+    const numbered = /^\s*(\d{1,2})[.)]\s+/.exec(line);
+    const bullet = !numbered && /^\s*[-*•]\s+/.test(line);
     if (!line.trim()) {
       blocks.push({ kind: "p", lines: [] });
       continue;
     }
     const last = blocks.at(-1);
-    const kind = bullet ? "ul" : "p";
-    const content = bullet ? line.replace(/^\s*(?:[-*•]|\d{1,2}[.)])\s+/, "") : line;
-    if (last && last.kind === kind && (kind === "ul" || last.lines.length)) last.lines.push(content);
-    else blocks.push({ kind, lines: [content] });
+    // An indented line right after a list item continues that item (for example "Run:" and "Expect:" under a step).
+    if (!numbered && !bullet && /^\s{2,}\S/.test(raw) && last && last.kind !== "p" && last.lines.length) {
+      last.lines[last.lines.length - 1] += `\n${line.trim()}`;
+      continue;
+    }
+    const kind = numbered ? "ol" : bullet ? "ul" : "p";
+    const content = numbered ? line.replace(/^\s*\d{1,2}[.)]\s+/, "") : bullet ? line.replace(/^\s*[-*•]\s+/, "") : line;
+    if (last && last.kind === kind && (kind !== "p" || last.lines.length)) last.lines.push(content);
+    else blocks.push({ kind, lines: [content], start: numbered ? Number(numbered[1]) : undefined });
   }
   return (
-    <div className="space-y-2 text-[13.5px] leading-[1.55] text-ink-2">
+    <div className="space-y-2.5 text-[14px] leading-[1.6] text-ink-2">
       {blocks
         .filter((block) => block.lines.length)
         .map((block, index) =>
-          block.kind === "ul" ? (
+          block.kind === "ol" ? (
+            <ol key={index} start={block.start} className="space-y-1.5">
+              {block.lines.map((line, i) => (
+                <li key={i} className="flex gap-2">
+                  <span aria-hidden className="w-4 shrink-0 text-right font-mono text-[12px] text-ink-3">
+                    {(block.start ?? 1) + i}.
+                  </span>
+                  <span className="min-w-0 whitespace-pre-line">
+                    <Inline text={line} />
+                  </span>
+                </li>
+              ))}
+            </ol>
+          ) : block.kind === "ul" ? (
             <ul key={index} className="space-y-1">
               {block.lines.map((line, i) => (
                 <li key={i} className="flex gap-2">

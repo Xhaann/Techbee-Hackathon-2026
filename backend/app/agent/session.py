@@ -22,7 +22,7 @@ from app.engine.safety import injection_flags
 from app.engine.schema import Confidence, Diagnosis, DiagnosisDraft, DiagnosisRequest
 from app.knowledge import KnowledgeService
 from app.network.models import DeviceRole, NetworkTopology, PathService
-from app.network.repository import list_scenario_ids, load_topology
+from app.network.repository import load_topology, scenario_exists
 from app.security.secrets import redact
 
 MAX_REPORT_CHARS = 4000
@@ -33,9 +33,12 @@ SERVICE_TERMS = {SERVICE_ROLES[role]: pattern for role, pattern in SERVICE_KEYWO
     PathService.APPLICATION: re.compile(r"\b(applications?|apps?|erp|portal|corporate services?|intranet|data cent(re|er))\b", re.IGNORECASE),
 }
 SYMPTOM_TERMS = re.compile(
-    r"\b(cannot (?:access|reach|connect|open|resolve|obtain|log ?in)\w*(?: [a-z]+){0,3}|can't (?:access|reach|connect)\w*(?: [a-z]+){0,3}"
-    r"|offline|down|outage|unreachable|slow(?: [a-z]+){0,2}|packet loss|choppy(?: [a-z]+)?|timeouts?|dropp\w+(?: [a-z]+)?"
-    r"|intermittent(?: [a-z]+)?|no (?:ip address|connectivity|network))\b", re.IGNORECASE)
+    r"\b(cannot (?:access|reach|connect|open|resolve|obtain|log ?in)\w*(?: (?!(?:since|for|from|at|in|after|when|this)\b)[a-z]+){0,3}"
+    r"|can't (?:access|reach|connect|get on|get to)\w*(?: (?!(?:since|for|from|at|in|after|when|this)\b)[a-z]+){0,3}"
+    r"|unable to (?:access|reach|connect|resolve|log ?in)\w*(?: (?!(?:since|for|from|at|in|after|when|this)\b)[a-z]+){0,3}"
+    r"|lost (?:all )?(?:[a-z]+ ){0,3}?(?:connectivity|connection|access|service)s?|no (?:[a-z]+ )?(?:connectivity|connection)"
+    r"|offline|down|outage|unreachable|not working|slow(?: (?!(?:since|for|from|at|in|after|when|this)\b)[a-z]+){0,2}|packet loss"
+    r"|choppy(?: [a-z]+)?|timeouts?|dropp\w+(?: [a-z]+)?|reboot\w*|intermittent(?: [a-z]+)?|no (?:ip address|network))\b", re.IGNORECASE)
 TIMEFRAME_TERMS = re.compile(
     r"\b(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?Z?|since \d{1,2}(?::\d{2})?\s?(?:am|pm)?(?: [A-Z]{2,4})?"
     r"|(?:for|in) the (?:last|past) \d+ (?:minutes?|hours?)|\d+ (?:minutes?|hours?) ago|this (?:morning|afternoon|evening)"
@@ -138,11 +141,12 @@ class DiagnosisAgent:
         return json.dumps(message)
 
     async def converse(self, budget: ToolBudget, opening: str, limitations: list[str], issues: list[str]) -> DiagnosisDraft | None:
-        agent = build_agent(self.model, budget, self.http_client)
+        deadline = run_deadline(self.model.config, self.settings.model_run_seconds)
+        agent = build_agent(self.model, budget, self.http_client, deadline)
         try:
-            response = await asyncio.wait_for(agent.run(opening), timeout=run_deadline(self.model.config))
+            response = await asyncio.wait_for(agent.run(opening), timeout=deadline)
         except asyncio.TimeoutError:
-            limitations.append(f"Model provider error (timeout: the agent run exceeded {run_deadline(self.model.config):.0f} seconds)")
+            limitations.append(f"Model provider error (timeout: the agent run exceeded {deadline:.0f} seconds)")
             return None
         except Exception as exc:
             limitations.append(failure_message(exc))
@@ -154,8 +158,8 @@ class DiagnosisAgent:
 
     async def arun(self, scenario_id: str, report: str, site_ids: Sequence[str] = (), device_ids: Sequence[str] = (),
                    services: Sequence[PathService] = (), incident_id: str | None = None, observer: Any = None,
-                   cancel_event: Any = None) -> AgentRun:
-        if scenario_id not in list_scenario_ids():
+                   cancel_event: Any = None, evidence_offset: int = 0) -> AgentRun:
+        if not scenario_exists(scenario_id):
             raise DiagnosisRequestError(f"Unknown scenario '{scenario_id}'")
         if not report or not report.strip() or len(report) > MAX_REPORT_CHARS:
             raise DiagnosisRequestError(f"The incident report must contain 1 to {MAX_REPORT_CHARS} characters")
@@ -164,7 +168,7 @@ class DiagnosisAgent:
         request = DiagnosisRequest(scenario_id=scenario_id, description=redact(report), incident_id=incident_id,
                                    site_ids=understanding.sites[:5])
         context = resolve_context(request, topology)
-        executor = ToolExecutor(scenario_id, observer=observer, cancel_event=cancel_event)
+        executor = ToolExecutor(scenario_id, observer=observer, cancel_event=cancel_event, evidence_offset=evidence_offset)
         budget = ToolBudget(executor, self.retriever if self.model else NoRetrieval())
         budget.observer = observer
         engine = DiagnosisEngine(self.model)
@@ -184,7 +188,7 @@ class DiagnosisAgent:
             executor.max_calls = executed + budget.remaining
 
             def sufficient() -> bool:
-                return correlate(executor.records, build_catalog(executor.records), topology, context.sites).confidence == Confidence.HIGH
+                return correlate(executor.records, build_catalog(executor.records), topology, context.sites, context.onset).confidence == Confidence.HIGH
             RuleBasedPlanner(topology, context).run(executor, sufficient)
             budget.attempts += len(executor.executed) - executed
             events.append(f"Rule-based planner collected evidence with {len(executor.executed) - executed} tool calls")

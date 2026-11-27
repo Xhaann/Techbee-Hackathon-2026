@@ -1,0 +1,141 @@
+{
+  "scenario_id": "SCN-03-BLR-ROGUE-STP-ROOT",
+  "incident_id": "INC-20260423-403",
+  "title": "Rogue switch takes the STP root",
+  "difficulty": [
+    "multi-layer",
+    "misleading-evidence",
+    "security-uncertainty"
+  ],
+  "capabilities": [
+    "device logs",
+    "interface statistics",
+    "STP",
+    "ARP",
+    "TCP",
+    "DHCP"
+  ],
+  "sites": [
+    "BLR"
+  ],
+  "unaffected_sites": [
+    "NYC",
+    "SIN"
+  ],
+  "affected_devices": [
+    "BLR-SW-01"
+  ],
+  "affected_services": [
+    "application",
+    "dns"
+  ],
+  "affected_paths": [
+    "PATH-BLR-APPLICATION",
+    "PATH-BLR-DNS"
+  ],
+  "timeline": [
+    {
+      "minute": -2.0,
+      "evidence": "events:EVT-S03-001",
+      "what": "Gi1/0/7 comes up"
+    },
+    {
+      "minute": -1.9,
+      "evidence": "events:EVT-S03-002",
+      "what": "VLAN 10 root moves to an unknown bridge"
+    },
+    {
+      "minute": 1.0,
+      "evidence": "protocol_events:PE-S03-02",
+      "what": "Topology changes keep arriving on Gi1/0/7"
+    }
+  ],
+  "root_cause": "A priority-0 switch on BLR-SW-01 Gi1/0/7 (no BPDU guard) became STP root; its unstable link keeps triggering topology changes.",
+  "symptoms": [
+    "Freezes every few minutes in Bengaluru"
+  ],
+  "secondary_effects": [
+    "MAC table flushes and flooding",
+    "TCP retransmissions"
+  ],
+  "decoys": [
+    {
+      "clue": "DHCP pool 82% utilised warning",
+      "evidence": [
+        "events:EVT-S03-020"
+      ],
+      "why_misleading": "82% is not exhaustion and allocations continue.",
+      "must_not_conclude": [
+        "dhcp",
+        "DHCP_POOL_EXHAUSTED"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": true,
+    "acceptable_domains": [
+      "switching"
+    ],
+    "note": "Root change and topology-change logs are in the core data; Phase A has no STP-specific tool."
+  },
+  "expected_findings": [
+    {
+      "engine": "stp",
+      "code": "STP_ROOT_UNEXPECTED",
+      "status": "suspicious_indicator",
+      "role": "root",
+      "min_confidence": null,
+      "max_confidence": 0.85
+    },
+    {
+      "engine": "stp",
+      "code": "STP_TC_STORM",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    }
+  ],
+  "acceptable_findings": [
+    "TCP_RETRANSMISSION_HIGH",
+    "THREAT_CORRELATED_ACTIVITY"
+  ],
+  "forbidden_findings": [
+    "ARP_GATEWAY_SPOOFING",
+    "ARP_IP_CONFLICT",
+    "STP_LOOP",
+    "VLAN_NATIVE_MISMATCH"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [
+    "STP_TC_STORM",
+    "STP_ROOT_UNEXPECTED"
+  ],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S03-001",
+    "events:EVT-S03-002",
+    "stp_vlans:BLR-SW-01|10",
+    "stp_ports:BLR-SW-01|Gi1/0/7|10",
+    "protocol_events:PE-S03-02"
+  ],
+  "configuration": [],
+  "commands": [
+    {
+      "device_id": "BLR-SW-01",
+      "command": "show spanning-tree vlan 10 detail",
+      "expect": "Root on Gi1/0/7, many recent topology changes"
+    },
+    {
+      "device_id": "BLR-SW-01",
+      "command": "show spanning-tree root",
+      "expect": "Root priority 0 with an unknown MAC"
+    },
+    {
+      "device_id": "BLR-SW-01",
+      "command": "show cdp neighbors Gi1/0/7 detail",
+      "expect": "Another switch on a user port"
+    }
+  ],
+  "confidence": "The topology-change storm is confirmed; the unknown root bridge is a suspicious indicator (a desk switch, not necessarily hostile), at most 0.85."
+}

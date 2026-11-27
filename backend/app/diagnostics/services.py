@@ -104,6 +104,9 @@ def response_stats(queries: list[DnsQuery]) -> dict[str, Any] | None:
     return {"count": len(times), "min_ms": min(times), "max_ms": max(times), "mean_ms": round(mean(times), 2)}
 
 
+EXTERNAL_ONLY = "names outside our DNS zones only"
+
+
 @diagnostic_tool("get_dhcp_dns_status")
 def get_dhcp_dns_status(scenario_id: str, site_id: str) -> ToolOutput:
     topology, dataset = load_dataset(scenario_id)
@@ -154,7 +157,9 @@ def get_dhcp_dns_status(scenario_id: str, site_id: str) -> ToolOutput:
         elif status == "high_utilization":
             output.findings.append(Finding(
                 code="DHCP_POOL_HIGH_UTILIZATION", kind=FindingKind.OBSERVED, device_id=pool.server_device_id,
-                summary=f"Pool {pool.pool_id} utilization is {utilization}%", evidence=[],
+                summary=f"Pool {pool.pool_id} utilization is {utilization}% ({in_use} of {pool.size} addresses in use)",
+                evidence=capped([evidence("dhcp_leases", f"{pool.pool_id}:{lease.ip_address}") for lease in leases
+                                 if lease.state in (LeaseState.ACTIVE, LeaseState.CONFLICT)]),
             ))
         for event_type, code in ((DhcpEventType.ALLOCATION_FAILURE, "DHCP_ALLOCATION_FAILURES"),
                                  (DhcpEventType.IP_CONFLICT, "DHCP_IP_CONFLICTS")):
@@ -181,6 +186,13 @@ def get_dhcp_dns_status(scenario_id: str, site_id: str) -> ToolOutput:
     subnets = [vlan.subnet for vlan in topology.vlans if vlan.site_id == site.site_id]
     queries = sorted((q for q in dataset.dns.queries if any(q.client_ip in subnet for subnet in subnets)),
                      key=lambda q: (q.timestamp, q.query_id))
+    zones = sorted({str(zone).lower() for server in dataset.dns.servers for zone in server.zones})
+
+    def ours(domain: str) -> bool:
+        """A name in one of our servers' zones (answered locally), as opposed to a name only the internet can answer."""
+        name = str(domain).lower().rstrip(".")
+        return any(name == zone or name.endswith(f".{zone}") for zone in zones)
+
     server_entries = []
     for server in dataset.dns.servers:
         served = [q for q in queries if q.server_ip == server.ip_address]
@@ -195,18 +207,29 @@ def get_dhcp_dns_status(scenario_id: str, site_id: str) -> ToolOutput:
                              (DnsResult.REFUSED, "DNS_REFUSED")):
             failed = [q for q in served if q.result == result]
             if failed:
+                outside = all(not ours(q.domain) for q in failed)
                 output.findings.append(Finding(
                     code=code, kind=FindingKind.OBSERVED,
                     device_id=None if result == DnsResult.TIMEOUT else server.device_id,
                     summary=f"{len(failed)} queries from {site.site_id} to {server.device_id} returned {result.value} "
                             f"between {failed[0].timestamp.isoformat()} and {failed[-1].timestamp.isoformat()} "
-                            f"(domains: {', '.join(sorted({q.domain for q in failed}))})",
+                            f"(domains: {', '.join(sorted({q.domain for q in failed}))})"
+                            + (f"; {EXTERNAL_ONLY}" if outside and zones else ""),
                     evidence=capped([query_ref(q) for q in failed]),
                 ))
     servfail_servers = sorted({e["server"]["device_id"] for e in server_entries if e["result_counts"].get("servfail")})
     answering_servers = sorted({e["server"]["device_id"] for e in server_entries if e["result_counts"].get("noerror")})
+    ip_of = {server.device_id: server.ip_address for server in dataset.dns.servers}
     for server_id in servfail_servers:
-        others = [other for other in answering_servers if other != server_id]
+        failing = [q for q in queries if q.server_ip == ip_of[server_id] and q.result == DnsResult.SERVFAIL]
+        failing_names = {q.domain for q in failing}
+        # Like for like: another server answering *our* names says nothing about this one failing an internet name. A
+        # server-side fault is suspected only when it fails names in our zones, or when another server answers the same names.
+        since = failing[0].timestamp if failing else None
+        same_names_answered = {q.server_ip for q in queries if q.domain in failing_names and q.result == DnsResult.NOERROR
+                               and since is not None and q.timestamp >= since}
+        others = [other for other in answering_servers if other != server_id
+                  and (any(ours(q.domain) for q in failing) or not zones or ip_of[other] in same_names_answered)]
         if others:
             output.findings.append(Finding(
                 code="DNS_SERVER_RESOLUTION_FAULT_SUSPECTED", kind=FindingKind.INFERRED, device_id=server_id,
@@ -214,6 +237,16 @@ def get_dhcp_dns_status(scenario_id: str, site_id: str) -> ToolOutput:
                         "successfully; a server-side resolution fault is suspected",
                 evidence=capped([query_ref(q) for q in queries if q.result == DnsResult.SERVFAIL]),
             ))
+    failed_all = [q for q in queries if q.result in (DnsResult.SERVFAIL, DnsResult.TIMEOUT)]
+    resolved_ours = [q for q in queries if q.result == DnsResult.NOERROR and ours(q.domain)]
+    if zones and failed_all and resolved_ours and all(not ours(q.domain) for q in failed_all):
+        output.findings.append(Finding(
+            code="DNS_UPSTREAM_RESOLUTION_FAILURE", kind=FindingKind.INFERRED, device_id=None,
+            summary=f"Only names outside our zones fail from {site.site_id} ({', '.join(sorted({q.domain for q in failed_all}))}) while "
+                    f"{len(resolved_ours)} queries for names in our zones resolved: the DNS servers answer but cannot reach the internet "
+                    "for external names, so internet egress (firewall, NAT or ISP) is the likelier cause, not the DNS service",
+            evidence=capped([query_ref(q) for q in failed_all] + [query_ref(q) for q in resolved_ours[:2]]),
+        ))
     first_timeout = next((index for index, q in enumerate(queries) if q.result == DnsResult.TIMEOUT), None)
     if first_timeout is not None:
         trailing = queries[first_timeout:]

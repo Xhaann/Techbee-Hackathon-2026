@@ -2,7 +2,7 @@
 
 import { Menu, MenuContent, MenuGroup, MenuGroupLabel, MenuItem, MenuSeparator, MenuTrigger } from "@ui-sdk/react/menu";
 import { ChevronDown } from "lucide-react";
-import { Pill } from "@/components/ui/atoms";
+import { DemoTag, Pill } from "@/components/ui/atoms";
 import type { Incident, Site } from "@/lib/api/types";
 import { cn } from "@/lib/cn";
 import { PRIORITY_LABEL, SEVERITY_LABEL, severityTone, STATUS_LABEL } from "@/lib/labels";
@@ -50,6 +50,7 @@ export function IncidentHeader({ incident, site, subtitle }: { incident: Inciden
           {PRIORITY_LABEL[incident.priority]} · {SEVERITY_LABEL[incident.severity]}
         </Pill>
         <span className="text-[13px] text-ink-2">{STATUS_LABEL[incident.status]}</span>
+        {incident.demo ? <DemoTag /> : null}
         <span className="ml-auto flex items-center gap-3">
           <span className="font-mono text-[11.5px] text-ink-3" title={stamp(incident.created_at, siteId)}>
             Opened {clock(incident.created_at, siteId)}

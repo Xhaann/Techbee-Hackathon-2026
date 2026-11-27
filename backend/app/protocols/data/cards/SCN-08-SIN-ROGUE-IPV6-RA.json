@@ -1,0 +1,128 @@
+{
+  "scenario_id": "SCN-08-SIN-ROGUE-IPV6-RA",
+  "incident_id": "INC-20260428-408",
+  "title": "Laptop advertising IPv6 routes",
+  "difficulty": [
+    "misleading-evidence",
+    "security-uncertainty",
+    "multi-layer"
+  ],
+  "capabilities": [
+    "IPv6",
+    "DNS",
+    "DHCP",
+    "threat correlation"
+  ],
+  "sites": [
+    "SIN"
+  ],
+  "unaffected_sites": [
+    "NYC",
+    "BLR"
+  ],
+  "affected_devices": [
+    "SIN-SW-01"
+  ],
+  "affected_services": [
+    "application",
+    "internet"
+  ],
+  "affected_paths": [
+    "PATH-SIN-APPLICATION",
+    "PATH-SIN-INTERNET"
+  ],
+  "timeline": [
+    {
+      "minute": -14.0,
+      "evidence": "events:EVT-S08-001",
+      "what": "Unrelated DNS SERVFAILs for an external name (decoy)"
+    },
+    {
+      "minute": -1.0,
+      "evidence": "router_adverts:SIN|10|rogue@2026-04-28T08:59:00Z",
+      "what": "First rogue router advertisement"
+    }
+  ],
+  "root_cause": "A laptop with connection sharing sends IPv6 router advertisements on Singapore's user VLAN; IPv6 is black-holed.",
+  "symptoms": [
+    "Slow connections",
+    "IPv6-only portal fails",
+    "IPv4 works"
+  ],
+  "secondary_effects": [
+    "Dual-stack fallback delays"
+  ],
+  "decoys": [
+    {
+      "clue": "DNS SERVFAILs earlier at every site",
+      "evidence": [
+        "events:EVT-S08-001",
+        "dns_queries:DNS-Q-S08-01"
+      ],
+      "why_misleading": "An upstream problem with one external name, at all sites, before the onset; internal names resolve.",
+      "must_not_conclude": [
+        "dns"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": false,
+    "acceptable_domains": [
+      "switching"
+    ],
+    "note": "Router advertisements and dual-stack probes exist only in the protocol telemetry; the core data holds only the decoy."
+  },
+  "expected_findings": [
+    {
+      "engine": "ipv6",
+      "code": "IPV6_ROGUE_RA",
+      "status": "suspicious_indicator",
+      "role": "root",
+      "min_confidence": null,
+      "max_confidence": 0.85
+    },
+    {
+      "engine": "ipv6",
+      "code": "IPV6_REACHABILITY_LOSS",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    }
+  ],
+  "acceptable_findings": [
+    "THREAT_CORRELATED_ACTIVITY"
+  ],
+  "forbidden_findings": [
+    "IPV6_DEFAULT_ROUTE_MISSING",
+    "IPV6_OSPFV3_ADJACENCY_DOWN",
+    "IPV6_PREFIX_UNREACHABLE"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S08-001",
+    "router_adverts:SIN|10|rogue@2026-04-28T08:59:00Z",
+    "dns_queries:DNS-Q-S08-11"
+  ],
+  "configuration": [],
+  "commands": [
+    {
+      "device_id": "SIN-SW-01",
+      "command": "show ipv6 neighbors",
+      "expect": "A router entry for a host MAC"
+    },
+    {
+      "device_id": "SIN-RTR-01",
+      "command": "show ipv6 interface Gi0/0/1.10",
+      "expect": "The router's own RA settings (healthy)"
+    },
+    {
+      "device_id": "SIN-SW-01",
+      "command": "show mac address-table address 02:00:14:0a:00:07",
+      "expect": "The laptop's access port"
+    }
+  ],
+  "confidence": "The rogue advertisement is a suspicious indicator (likely a misconfigured laptop, intent unknown), at most 0.85; the IPv6 loss is confirmed by probes."
+}

@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from app.agent.session import SERVICE_TERMS, SYMPTOM_TERMS, TIMEFRAME_TERMS
 from app.conversation.models import Entities, Scope
+from app.network.aliases import SITE_ALIASES, UPPERCASE_ONLY_ALIASES
 from app.network.models import DeviceRole, LinkType, NetworkTopology
 from app.network.repository import load_topology
 
@@ -15,7 +16,7 @@ INTERFACE_PATTERN = re.compile(
 INTERFACE_PREFIX = {"gigabitethernet": "Gi", "gi": "Gi", "tengigabitethernet": "Te", "te": "Te", "fastethernet": "Fa",
                     "fa": "Fa", "ethernet": "Eth", "eth": "Eth", "et": "Eth", "ge-": "ge-", "xe-": "xe-"}
 WAN_INTERFACE = re.compile(r"\b(wan (?:interface|link|port|circuit|uplink)|uplink|wan side|carrier (?:link|circuit))\b", re.IGNORECASE)
-EVIDENCE_PATTERN = re.compile(r"(?:\bevidence\s+(?:item\s+)?#?\s*[eE]?(\d{1,3})\b|\b[E](\d{1,3})\b)")
+EVIDENCE_PATTERN = re.compile(r"(?:\bevidence\s+(?:item\s+)?#?\s*[eE]?(\d{1,4})\b|\b[E](\d{1,4})\b)")
 IPV4 = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?)\b")
 SCOPES: list[tuple[Scope, re.Pattern[str]]] = [
     ("single", re.compile(r"\b(one user|a single user|single user|only me|just me|just one (?:user|person)|one person|only one (?:user|person)"
@@ -23,11 +24,13 @@ SCOPES: list[tuple[Scope, re.Pattern[str]]] = [
     ("some", re.compile(r"\b(some (?:users|people|staff|of (?:them|the users))|a few|several (?:users|people)|part of|only some|a subset"
                         r"|some$|half (?:of )?the|a handful|certain users|a couple of)\b", re.IGNORECASE)),
     ("everyone", re.compile(r"\b(everyone|everybody|all (?:the )?(?:users|staff|employees|people|of them|devices|clients)|whole (?:office|site|branch|team|building)"
-                            r"|entire (?:office|site|branch|building)|site[- ]wide|office[- ]wide|nobody|no one|all of (?:them|us)|every user|all$|all users)\b",
+                            r"|entire (?:office|site|branch|building)|site[- ]wide|office[- ]wide|nobody|no one|all of (?:them|us)|every user|all$|all users"
+                            r"|lost all|(?:both|all) (?:offices|sites|branches|locations)|(?:completely|totally|fully) (?:offline|down))\b",
                             re.IGNORECASE)),
 ]
-SITE_ALIASES = {"bangalore": "BLR", "bengaluru": "BLR", "new york": "NYC", "ny": "NYC", "nyc": "NYC", "singapore": "SIN",
-                "london": "CORE", "slough": "DC1", "data centre": "DC1", "data center": "DC1", "datacenter": "DC1", "datacentre": "DC1"}
+UNAFFECTED_AFTER = re.compile(r"^[^.;,!?]{0,40}?\b(?:is|are|seems?|looks?|remains?|stays?)?\s*(?:fine|ok|okay|unaffected|not affected|"
+                              r"working(?: normally| fine)?|works(?: normally| fine)?|good|healthy|normal|up)\b", re.IGNORECASE)
+UNAFFECTED_BEFORE = re.compile(r"\b(?:except(?: for)?|apart from|other than|but not|not including|excluding)\s+(?:the\s+)?$", re.IGNORECASE)
 ROLE_WORDS: list[tuple[DeviceRole, re.Pattern[str]]] = [
     (DeviceRole.WAN_EDGE, re.compile(r"\b(routers?|rtr|wan edges?|edge routers?|gateways?)\b", re.IGNORECASE)),
     (DeviceRole.ACCESS_SWITCH, re.compile(r"\b(switch(?:es)?|access switch(?:es)?|sw)\b", re.IGNORECASE)),
@@ -112,18 +115,37 @@ def ordered_devices(text: str, index: TopologyIndex) -> list[tuple[int, str]]:
     return sorted(((position, device) for device, position in found.items()))
 
 
-def site_mentions(text: str, index: TopologyIndex) -> list[str]:
-    sites: list[str] = []
+def site_spans(text: str, index: TopologyIndex) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
     for site_id, name in index.site_names.items():
-        if re.search(rf"(?<![A-Za-z0-9-]){re.escape(site_id)}(?![A-Za-z0-9-])", text) or re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE):
-            sites.append(site_id)
-    lowered = text.lower()
+        for pattern, flags in ((rf"(?<![A-Za-z0-9-]){re.escape(site_id)}(?![A-Za-z0-9-])", 0), (rf"\b{re.escape(name)}\b", re.IGNORECASE)):
+            spans += [(m.start(), m.end(), site_id) for m in re.finditer(pattern, text, flags)]
     for alias, site_id in SITE_ALIASES.items():
-        if re.search(rf"\b{re.escape(alias)}\b", lowered) and site_id not in sites:
-            if alias == "ny" and not re.search(r"\bNY\b", text):
-                continue
-            sites.append(site_id)
-    return sites
+        spans += [(m.start(), m.end(), site_id) for m in re.finditer(rf"\b{re.escape(alias)}\b", text, re.IGNORECASE)]
+    for alias, site_id in UPPERCASE_ONLY_ALIASES.items():
+        spans += [(m.start(), m.end(), site_id) for m in re.finditer(rf"\b{re.escape(alias)}\b", text)]
+    return sorted(spans)
+
+
+def site_mentions(text: str, index: TopologyIndex) -> list[str]:
+    """Sites the text names as affected, in order. A site described as fine or excluded ("Bengaluru is fine",
+    "everyone except Singapore") is left out; see unaffected_sites."""
+    affected: list[str] = []
+    for start, end, site_id in site_spans(text, index):
+        fine = UNAFFECTED_AFTER.match(text[end:])
+        rest = text[end + fine.end():] if fine else ""
+        asked = fine is not None and re.match(r"^(?:(?!\b(?:but|and|while|whereas)\b)[^.;!?])*\?", rest, re.IGNORECASE) is not None
+        if (fine and not asked) or UNAFFECTED_BEFORE.search(text[:start]):
+            continue
+        if site_id not in affected:
+            affected.append(site_id)
+    return affected
+
+
+def unaffected_sites(text: str, index: TopologyIndex) -> list[str]:
+    named = list(dict.fromkeys(site_id for _, _, site_id in site_spans(text, index)))
+    affected = set(site_mentions(text, index))
+    return [site_id for site_id in named if site_id not in affected]
 
 
 def alias_devices(text: str, sites: list[str], index: TopologyIndex) -> list[str]:
@@ -186,7 +208,7 @@ def extract(text: str, index: TopologyIndex | None = None) -> Entities:
     timeframe = next((match.group(0) for match in TIMEFRAME_TERMS.finditer(text)), None)
     return Entities(site_ids=sites[:5], device_ids=devices[:10], interfaces=interfaces_in(text)[:5], services=services,
                     symptoms=symptoms, scope=scope_in(text), timeframe=timeframe, evidence_ids=evidence_ids_in(text),
-                    ip_addresses=ip_addresses_in(text))
+                    ip_addresses=ip_addresses_in(text), unaffected_site_ids=[s for s in unaffected_sites(text, index) if s not in sites])
 
 
 def wan_interface_requested(text: str) -> bool:

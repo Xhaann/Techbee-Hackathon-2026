@@ -5,7 +5,7 @@ from app.agent.review import AgentReport, build_report
 from app.agent.session import DiagnosisAgent
 from app.engine.planner import DiagnosisRequestError
 from app.engine.providers import ProviderError
-from app.network.repository import list_scenario_ids
+from app.network.repository import all_scenario_ids
 from app.security.secrets import redact
 
 CONFIGURATION_HELP = "Configure AI_PROVIDER=openai, AI_MODEL and AI_API_KEY in backend/.env, or pass --rule-based"
@@ -48,7 +48,7 @@ def render(report: AgentReport) -> str:
 
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.agent", description="Local Network Incident Diagnosis Assistant agent")
-    parser.add_argument("--scenario", required=True, choices=list_scenario_ids(), help="Synthetic dataset scenario")
+    parser.add_argument("--scenario", required=True, choices=all_scenario_ids(), help="Synthetic dataset scenario")
     parser.add_argument("--json", action="store_true", help="Print the structured report as JSON")
     parser.add_argument("--rule-based", action="store_true", help="Run without a model using the deterministic planner")
     parser.add_argument("report", help="Natural-language incident report")

@@ -26,7 +26,7 @@ from app.network.models import (
     Severity,
     Site,
 )
-from app.network.repository import DatasetIntegrityError, DatasetNotFoundError, list_scenario_ids, load_scenario, load_topology
+from app.network.repository import DatasetIntegrityError, DatasetNotFoundError, all_scenario_ids, load_scenario, load_topology
 
 MAX_RECORDS = 500
 DEFAULT_RECORDS = 100
@@ -175,7 +175,7 @@ def load_dataset(scenario_id: Any) -> tuple[NetworkTopology, ScenarioDataset]:
     try:
         dataset = load_scenario(scenario_id)
     except DatasetNotFoundError:
-        raise not_found(f"Unknown scenario '{scenario_id}'. Available: {', '.join(list_scenario_ids())}") from None
+        raise not_found(f"Unknown scenario '{scenario_id}'. Available: {', '.join(all_scenario_ids())}") from None
     return load_topology(), dataset
 
 

@@ -9,7 +9,7 @@ def test_route_surface_is_exactly_the_approved_set(api) -> None:
     assert route_surface(api.client) == EXPECTED_ROUTES
     tags = {tag for path in api.client.get("/openapi.json").json()["paths"].values() for op in path.values() for tag in op["tags"]}
     assert tags == {"health", "auth", "dashboard", "topology", "diagnosis", "agent", "conversations", "incidents", "knowledge",
-                    "reports"}
+                    "reports", "observability", "protocols"}
 
 
 def test_health_is_public_and_unchanged(api) -> None:

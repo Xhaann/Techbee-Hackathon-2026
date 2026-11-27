@@ -1,0 +1,201 @@
+{
+  "scenario_id": "SCN-01-NYC-WAN-FLAP-STORM",
+  "incident_id": "INC-20260421-401",
+  "title": "New York circuit bouncing",
+  "difficulty": [
+    "multi-layer",
+    "cascading",
+    "multiple-symptoms",
+    "misleading-evidence"
+  ],
+  "capabilities": [
+    "interface statistics",
+    "event timeline",
+    "routing adjacency",
+    "BGP",
+    "OSPF LSDB",
+    "IPsec",
+    "TCP",
+    "multicast",
+    "MTU",
+    "DNS"
+  ],
+  "sites": [
+    "NYC"
+  ],
+  "unaffected_sites": [
+    "SIN",
+    "BLR"
+  ],
+  "affected_devices": [
+    "NYC-RTR-01",
+    "CORE-RTR-01"
+  ],
+  "affected_services": [
+    "application",
+    "dns",
+    "internet",
+    "voice",
+    "video"
+  ],
+  "affected_paths": [
+    "PATH-NYC-APPLICATION",
+    "PATH-NYC-DNS",
+    "PATH-NYC-INTERNET"
+  ],
+  "timeline": [
+    {
+      "minute": -8.0,
+      "evidence": "events:EVT-S01-001",
+      "what": "CRC errors start on NYC-RTR-01 Gi0/0/0"
+    },
+    {
+      "minute": -6.0,
+      "evidence": "events:EVT-S01-002",
+      "what": "Unrelated firewall rule committed on CORE-FW-01 (decoy)"
+    },
+    {
+      "minute": 0.0,
+      "evidence": "events:EVT-S01-003",
+      "what": "First loss of signal; BGP session drops"
+    },
+    {
+      "minute": 1.2,
+      "evidence": "events:EVT-S01-010",
+      "what": "Link and BGP back; prefixes re-announced"
+    },
+    {
+      "minute": 12.0,
+      "evidence": "events:EVT-S01-039",
+      "what": "Fifth loss of signal"
+    },
+    {
+      "minute": 14.0,
+      "evidence": "events:EVT-S01-051",
+      "what": "Probe recovers; circuit still erroring"
+    }
+  ],
+  "root_cause": "Carrier circuit WAN-NYC-0001 (LNK-WAN-NYC) degrading and bouncing; everything else is a consequence.",
+  "symptoms": [
+    "Drops every few minutes",
+    "Calls and ERP cut out",
+    "All-hands video freezes"
+  ],
+  "secondary_effects": [
+    "BGP routes flap",
+    "OSPF externals for New York re-flooded",
+    "Backup VPN dead-peer timeouts",
+    "TCP retransmissions and longer round trips",
+    "DNS timeouts during each drop",
+    "PIM neighbour bounces"
+  ],
+  "decoys": [
+    {
+      "clue": "Firewall rule ALLOW-SAAS-CRM committed six minutes before the onset",
+      "evidence": [
+        "events:EVT-S01-002"
+      ],
+      "why_misleading": "It allows a new port outbound and touches no New York traffic; the timing is coincidence.",
+      "must_not_conclude": [
+        "firewall"
+      ]
+    },
+    {
+      "clue": "DNS lookups time out",
+      "evidence": [
+        "dns_queries:DNS-Q-S01-01",
+        "dns_queries:DNS-Q-S01-02"
+      ],
+      "why_misleading": "They time out only while the circuit is down; the DNS servers are healthy.",
+      "must_not_conclude": [
+        "dns"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": true,
+    "acceptable_domains": [
+      "wan_isp",
+      "interface_link"
+    ],
+    "note": "Interface errors, carrier loss and BGP state changes are all in the core data."
+  },
+  "expected_findings": [
+    {
+      "engine": "bgp",
+      "code": "BGP_ROUTE_FLAP",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    },
+    {
+      "engine": "tcp",
+      "code": "TCP_RETRANSMISSION_HIGH",
+      "status": "confirmed_fault",
+      "role": "effect",
+      "min_confidence": 0.7,
+      "max_confidence": null
+    }
+  ],
+  "acceptable_findings": [
+    "TCP_HANDSHAKE_FAILURES",
+    "TCP_RTT_INFLATION",
+    "OSPF_LSA_CHURN",
+    "BGP_WITHDRAWAL_BURST",
+    "IPSEC_PEER_UNREACHABLE"
+  ],
+  "forbidden_findings": [
+    "NAT_RULE_MISSING",
+    "NAT_RULE_SHADOWED",
+    "TLS_CERTIFICATE_EXPIRED",
+    "MTU_BLACK_HOLE",
+    "STP_LOOP"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S01-001",
+    "events:EVT-S01-003",
+    "route_changes:RC-S01-001",
+    "bgp_updates:BU-S01-001",
+    "lsa_updates:LSU-S01-001",
+    "protocol_events:PE-S01-01",
+    "interface_statistics:NYC-RTR-01:Gi0/0/0@2026-04-21T09:05:00+00:00",
+    "dns_queries:DNS-Q-S01-01"
+  ],
+  "configuration": [
+    {
+      "device_id": "CORE-FW-01",
+      "golden_contains": [],
+      "running_contains": [
+        "rule FWR-CORE-0105 priority 105 name ALLOW-SAAS-CRM allow tcp 10.0.0.0/8 -> 0.0.0.0/0 port 8443"
+      ],
+      "running_lacks": []
+    }
+  ],
+  "commands": [
+    {
+      "device_id": "NYC-RTR-01",
+      "command": "show interfaces Gi0/0/0",
+      "expect": "Rising CRC and input errors, several resets"
+    },
+    {
+      "device_id": "NYC-RTR-01",
+      "command": "show ip bgp summary",
+      "expect": "Session to 172.16.0.1 up only a few minutes"
+    },
+    {
+      "device_id": "CORE-RTR-02",
+      "command": "show ip ospf database external 10.10.10.0",
+      "expect": "A recent sequence number"
+    },
+    {
+      "device_id": "NYC-RTR-01",
+      "command": "ping 172.16.0.1 repeat 100",
+      "expect": "Loss of several percent"
+    }
+  ],
+  "confidence": "The physical cause is in the core data, so a diagnosis should be high confidence on the WAN circuit; protocol findings are effects, confirmed with confidence of at least 0.7."
+}

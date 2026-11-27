@@ -176,6 +176,29 @@ export const DEVICE_TYPE_LABEL: Record<DeviceType, string> = {
   server: "Server",
 };
 
+/** Categories the inventory may add later (the topology has none today), labelled the same way. */
+const EXTRA_DEVICE_TYPE_LABEL: Record<string, string> = {
+  access_point: "Access point",
+  wireless_access_point: "Access point",
+  wireless_controller: "Wireless controller",
+  controller: "Controller",
+  load_balancer: "Load balancer",
+};
+
+export const UNKNOWN_DEVICE_TYPE = "Unknown type";
+
+/**
+ * The human-readable type of a device, from its inventory record only. An inventory value with no label yet is shown as
+ * recorded (in words); a device with no inventory record is "Unknown type", never a guess from its hostname.
+ */
+export function deviceTypeLabel(type: string | null | undefined): string {
+  if (!type) return UNKNOWN_DEVICE_TYPE;
+  const known = (DEVICE_TYPE_LABEL as Record<string, string>)[type] ?? EXTRA_DEVICE_TYPE_LABEL[type];
+  if (known) return known;
+  const words = type.replace(/[_-]+/g, " ").trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : UNKNOWN_DEVICE_TYPE;
+}
+
 export const ROLE_LABEL: Record<DeviceRole, string> = {
   wan_edge: "WAN edge",
   core_router: "Core router",

@@ -24,7 +24,7 @@ def copy_data(tmp_path: Path) -> Path:
 
 def test_data_directory_is_package_relative() -> None:
     assert DATA_DIR == Path(__file__).resolve().parents[2] / "app" / "network" / "data"
-    assert len(list_scenario_ids()) == 9
+    assert len(list_scenario_ids()) == 16
 
 
 @pytest.mark.parametrize("scenario_id", ["UNKNOWN", "../topology", "", "baseline"])

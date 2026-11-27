@@ -47,7 +47,7 @@ def test_ai_api_key_setting_is_supported(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_all_diagnostic_tools_and_knowledge_are_registered() -> None:
     tools = {tool.name: tool for tool in build_tools(budget())}
-    assert set(tools) == set(REGISTRY) | {KNOWLEDGE_TOOL} and len(tools) == 13
+    assert set(tools) == set(REGISTRY) | {KNOWLEDGE_TOOL} and len(tools) == 22
     for name, spec in REGISTRY.items():
         assert tools[name].parameters() == spec.schema()["function"]["parameters"]
     assert tools[KNOWLEDGE_TOOL].parameters() == KNOWLEDGE_SCHEMA
@@ -71,7 +71,7 @@ def test_model_request_uses_configured_model_key_and_limits() -> None:
     agent.run("WAN-FAILURE", "Users at the Singapore branch cannot access internal applications.")
     request = model.requests[0]
     assert request["model"] == "approved-test-model" and request["max_completion_tokens"] == 2000
-    assert request["parallel_tool_calls"] is False and len(request["tools"]) == 13
+    assert request["parallel_tool_calls"] is False and len(request["tools"]) == 22
     assert model.headers[0]["authorization"] == f"Bearer {FAKE_KEY}"
     assert request["messages"][0] == {"role": "system", "content": AGENT_INSTRUCTIONS}
 

@@ -30,6 +30,10 @@ import { SignalStrip } from "./signals";
 
 type Tab = WorkspaceTab;
 
+/** The incident page's content grid: the same width cap as the Diagnose page, with the padding inside it, so the header, cards,
+ * affected path, tabs and the sticky next-step bar all share one left and right edge. */
+const COLUMN = "mx-auto w-full max-w-[1200px] px-5 md:px-8";
+
 export function IncidentWorkspace({ incidentId }: { incidentId: string }) {
   const query = useIncident(incidentId);
 
@@ -109,10 +113,12 @@ function Loaded({ incident }: { incident: Incident }) {
         actions={
           <>
             {incident.dataset_scenario_id ? (
-              <Tip label={`Telemetry comes from the synthetic ${incident.dataset_scenario_id} dataset${scenario ? `: ${scenario.summary}` : ""}`}>
-                <span tabIndex={0} aria-label="Demo data" className="hidden h-6 items-center gap-1.5 rounded-[6px] bg-hover px-2 text-[12px] text-ink-3 md:inline-flex">
+              <Tip
+                label={`${incident.demo ? "Demo incident seeded from a synthetic scenario. " : ""}Telemetry comes from the synthetic ${incident.dataset_scenario_id} dataset${scenario ? `: ${scenario.summary}` : ""}`}
+              >
+                <span tabIndex={0} aria-label={incident.demo ? "Demo incident" : "Demo data"} className="hidden h-6 items-center gap-1.5 rounded-[6px] bg-hover px-2 text-[12px] text-ink-3 md:inline-flex">
                   <span className="size-[5px] rounded-full bg-ink-3" aria-hidden />
-                  Demo data
+                  {incident.demo ? "Demo incident" : "Demo data"}
                 </span>
               </Tip>
             ) : null}
@@ -147,7 +153,7 @@ function Loaded({ incident }: { incident: Incident }) {
       <IncidentActions incident={incident} onViewChecks={() => setTab("checks")}>
         <div className="flex min-h-0 flex-1">
           <div className="scroll-thin flex min-w-0 flex-1 flex-col overflow-y-auto">
-            <div className="mx-auto flex w-full max-w-[900px] flex-1 flex-col gap-4 px-5 pt-6 md:px-8">
+            <div className={cn(COLUMN, "flex flex-1 flex-col gap-4 pt-6")}>
               <IncidentHeader incident={incident} site={site} subtitle={subtitle} />
               <div className="mt-1.5">
                 <RootCauseCard incident={incident} record={record} diagnosis={diagnosis} />
@@ -217,8 +223,8 @@ function Loaded({ incident }: { incident: Incident }) {
               ) : null}
               <div className="flex-1" />
             </div>
-            <div className="sticky bottom-0 z-10 bg-page px-5 pt-4 pb-5 md:px-8">
-              <div className="mx-auto max-w-[900px]">
+            <div className="sticky bottom-0 z-10 bg-page pt-4 pb-5">
+              <div className={COLUMN}>
                 <NextStepBar diagnosis={diagnosis} />
               </div>
             </div>
@@ -268,7 +274,7 @@ function WorkspaceSkeleton({ incidentId }: { incidentId: string }) {
   return (
     <>
       <Topbar crumbs={[{ label: "Network diagnosis", href: "/diagnose" }, { label: incidentId, mono: true }]} />
-      <div className="mx-auto w-full max-w-[900px] space-y-4 px-5 pt-6 md:px-8" aria-busy="true">
+      <div className={cn(COLUMN, "space-y-4 pt-6")} aria-busy="true">
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-9 w-[420px] max-w-full" />
         <Skeleton className="h-4 w-60" />

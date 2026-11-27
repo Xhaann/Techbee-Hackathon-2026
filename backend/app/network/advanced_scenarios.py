@@ -1,12 +1,11 @@
-"""Generate advanced synthetic incident scenarios on top of the existing network simulation.
+"""Advanced synthetic incident scenarios built on top of the base network simulation.
 
-The scenarios reuse the shared topology and the Simulation engine from app.network.generator, then add
-conditions the base generator does not model: intermittent faults that recover, monitoring gaps, misleading
-but legitimate changes, subnet-scoped policy, absent telemetry and congestion decoys.
+They reuse the shared topology and the Simulation engine from app.network.generator, then add conditions the base
+generator does not model: intermittent faults that recover, monitoring gaps, misleading but legitimate changes,
+subnet-scoped policy, absent telemetry and congestion decoys. Output goes to app/network/data/scenarios next to the base
+scenarios; generation is deterministic, so rerunning reproduces the committed files byte for byte.
 
-Output is written to backend/generated/scenarios/ and never touches app/network/data.
-
-Run from backend/:  .venv/bin/python -m generated.generate_advanced_scenarios
+Run from backend/:  .venv/bin/python -m app.network.advanced_scenarios
 """
 import shutil
 import sys
@@ -30,7 +29,6 @@ from app.network.generator import (
     INTERNET_EDGE,
     METRO_LINK,
     MISSING_DOMAIN,
-    RULE_BASELINE_TIME,
     SERVER_IP,
     EventTemplate,
     IncidentSpec,
@@ -42,7 +40,6 @@ from app.network.generator import (
 )
 from app.network.models import (
     BgpNeighbor,
-    DhcpData,
     DhcpEvent,
     DhcpEventType,
     DhcpLease,
@@ -70,13 +67,12 @@ from app.network.models import (
     ScenarioDataset,
     Severity,
     TransportProtocol,
-    device_of,
     match_firewall_rule,
 )
 from app.network.repository import find_reference_errors, load_scenario, load_topology
 
-BACKEND = Path(__file__).resolve().parents[1]
-OUTPUT_DIR = Path(__file__).resolve().parent / "scenarios"
+BACKEND = Path(__file__).resolve().parents[2]
+OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "scenarios"
 FIRST_INDEX = 20
 UDP, TCP = TransportProtocol.UDP, TransportProtocol.TCP
 DENY, ALLOW = FirewallAction.DENY, FirewallAction.ALLOW
@@ -630,7 +626,7 @@ SPECS = (
             IncidentPriority.P3, 12, "Telephony Team", ("NYC",),
             ("Desk phones show 'Configuring IP'", "Desktops unaffected", "Started after phone firmware rollout"),
         ),
-        root_cause="During a config clean-up at about 09:57 UTC the DHCP helper 10.100.100.20 was removed from NYC-RTR-01 "
+        root_cause="During a config clean-up at about 08:57 UTC the DHCP helper 10.100.100.20 was removed from NYC-RTR-01 "
                    "Gi0/0/1.20 (voice VLAN 20); DHCP requests from rebooting phones are no longer relayed to "
                    "DC1-SRV-DHCP-01, so pool DHCP-NYC-VOICE receives no traffic.",
         root_cause_device_ids=("NYC-RTR-01",),

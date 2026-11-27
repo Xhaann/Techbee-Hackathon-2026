@@ -1,0 +1,133 @@
+{
+  "scenario_id": "SCN-09-NYC-IGMP-QUERIER-WIFI",
+  "incident_id": "INC-20260429-409",
+  "title": "Multicast flood slows Wi-Fi",
+  "difficulty": [
+    "multi-layer",
+    "cascading",
+    "misleading-evidence"
+  ],
+  "capabilities": [
+    "change history",
+    "multicast",
+    "wireless",
+    "interface statistics"
+  ],
+  "sites": [
+    "NYC"
+  ],
+  "unaffected_sites": [
+    "SIN",
+    "BLR"
+  ],
+  "affected_devices": [
+    "NYC-SW-01"
+  ],
+  "affected_services": [
+    "wi-fi",
+    "video"
+  ],
+  "affected_paths": [
+    "PATH-NYC-APPLICATION"
+  ],
+  "timeline": [
+    {
+      "minute": -7.0,
+      "evidence": "events:EVT-S09-001",
+      "what": "IGMP snooping querier disabled on NYC-SW-01"
+    },
+    {
+      "minute": 2.0,
+      "evidence": "events:EVT-S09-002",
+      "what": "No querier: group entries ageing out"
+    },
+    {
+      "minute": 6.0,
+      "evidence": "protocol_events:PE-S09-01",
+      "what": "Radar event on NYC-AP-01 (decoy)"
+    }
+  ],
+  "root_cause": "IGMP snooping querier disabled; the video floods VLAN 10 including the AP uplinks and consumes Wi-Fi airtime.",
+  "symptoms": [
+    "Wi-Fi very slow",
+    "Video drops for wired viewers"
+  ],
+  "secondary_effects": [
+    "High channel utilisation and retries without RF interference"
+  ],
+  "decoys": [
+    {
+      "clue": "Radar event on NYC-AP-01",
+      "evidence": [
+        "protocol_events:PE-S09-01"
+      ],
+      "why_misleading": "One channel change; both APs and both bands are slow.",
+      "must_not_conclude": [
+        "WIFI_INTERFERENCE"
+      ]
+    }
+  ],
+  "phase_a": {
+    "visible_in_core_data": false,
+    "acceptable_domains": [
+      "switching"
+    ],
+    "note": "Only the change log and uplink utilisation are in the core data."
+  },
+  "expected_findings": [
+    {
+      "engine": "multicast",
+      "code": "MCAST_NO_QUERIER",
+      "status": "confirmed_fault",
+      "role": "root",
+      "min_confidence": 0.8,
+      "max_confidence": null
+    },
+    {
+      "engine": "wireless",
+      "code": "WIFI_CO_CHANNEL",
+      "status": "possible_explanation",
+      "role": "effect",
+      "min_confidence": null,
+      "max_confidence": 0.65
+    }
+  ],
+  "acceptable_findings": [
+    "WIFI_DFS_CHANNEL_CHANGE"
+  ],
+  "forbidden_findings": [
+    "WIFI_INTERFERENCE",
+    "MCAST_RP_MISMATCH",
+    "MCAST_RPF_FAILURE"
+  ],
+  "max_counts": {},
+  "acceptable_roots": [
+    "MCAST_NO_QUERIER"
+  ],
+  "threat_hosts": [],
+  "evidence": [
+    "events:EVT-S09-001",
+    "events:EVT-S09-002",
+    "igmp_groups:NYC-SW-01|10|239.10.1.1",
+    "protocol_events:PE-S09-01"
+  ],
+  "configuration": [],
+  "commands": [
+    {
+      "device_id": "NYC-SW-01",
+      "command": "show ip igmp snooping querier",
+      "expect": "No querier on VLAN 10"
+    },
+    {
+      "device_id": "NYC-SW-01",
+      "command": "show ip igmp snooping groups vlan 10",
+      "expect": "Entries missing or ageing"
+    },
+    {
+      "device_id": "CORE-WLC-01",
+      "command": "show ap auto-rf dot11 5ghz",
+      "expect": "High utilisation, low interference"
+    }
+  ],
+  "confidence": "The missing querier is direct configuration evidence (at least 0.8); the Wi-Fi contention is a possible explanation of the slowness (at most 0.65); interference must not be concluded."
+}

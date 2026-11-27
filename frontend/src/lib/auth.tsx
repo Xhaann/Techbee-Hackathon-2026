@@ -30,6 +30,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(
     (notice?: string) => {
+      const token = window.sessionStorage.getItem(TOKEN_KEY);
+      // Best effort: the session ends locally even if the server can't be reached.
+      if (token) void api.auth.logout(token).catch(() => undefined);
       window.sessionStorage.removeItem(TOKEN_KEY);
       configureSession({ token: null });
       queryClient.clear();
@@ -65,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    onUnauthorized(() => signOut("Your session ended. Sign in with a current token."));
+    onUnauthorized(() => signOut("Your session ended. Sign in again."));
     return () => onUnauthorized(null);
   }, [signOut]);
 
